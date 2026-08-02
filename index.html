@@ -250,6 +250,9 @@
 (function(){
   "use strict";
 
+  const LANCES_POR_POBLACION = 16;  // número fijo de lances de atarraya por población
+  const DIAS_CICLO = 40;            // duración máxima del ciclo de una piscina
+
   const state = {
     farmId: null,
     piscinas: [], ciclos: [], poblaciones: [],
@@ -269,9 +272,6 @@
     backupConfig: { url: null, lastBackup: null },
     planConfig: { diaInicial: 8, intervalo: 10, porDia: 3, horizonte: DIAS_CICLO },
   };
-
-  const LANCES_POR_POBLACION = 16;  // número fijo de lances de atarraya por población
-  const DIAS_CICLO = 40;            // duración máxima del ciclo de una piscina
 
   function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2)); }
   function todayISO(){ return new Date().toISOString().slice(0,10); }

@@ -756,7 +756,10 @@
         + '</div>'
         + '<div class="field"><label>Pegar capturas de una vez (separadas por espacio, coma o salto de línea)</label>'
           + '<textarea id="bulk-input" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--surface-2);font-family:var(--mono);font-size:13px;" placeholder="ej. 120 168 103 100 60 100 105 80"></textarea></div>'
-        + '<button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:12px;" data-action="bulk-fill">⚡ Rellenar tabla con estos valores</button>'
+        + '<button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:8px;" data-action="bulk-fill">⚡ Rellenar capturas con estos valores</button>'
+        + '<div class="field"><label>Pegar profundidades de una vez (mismo orden que las celdas)</label>'
+          + '<textarea id="bulk-input-prof" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--surface-2);font-family:var(--mono);font-size:13px;" placeholder="ej. 90 100 85 90 100 95 100 130"></textarea></div>'
+        + '<button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:12px;" data-action="bulk-fill-prof">⚡ Rellenar profundidades con estos valores</button>'
         + '<div class="pond-table"><div class="grid-cells">'+cells+'</div></div>'
         + statsPanel
         + '<div class="divider"></div>'
@@ -1062,6 +1065,20 @@
     render();
   }
 
+  async function handleBulkFillProf(){
+    const raw = document.getElementById("bulk-input-prof").value || "";
+    const nums = (raw.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    if (!nums.length){ showToast("No encontré números en el texto pegado."); return; }
+    const ciclo = getCicloActivo(state.session.piscinaId);
+    if (!ciclo) return;
+    const pob = ensurePoblacion(ciclo.id, state.session.fecha);
+    if (pob.tiros.length < nums.length) resizeGrid(pob, nums.length - pob.tiros.length);
+    nums.forEach((n,i)=>{ if (!pob.tiros[i]) pob.tiros[i] = emptyCell(); pob.tiros[i].profundidad = n; });
+    await storageSet("poblaciones", state.poblaciones);
+    showToast(nums.length+" profundidades cargadas.");
+    render();
+  }
+
   async function handleGridResize(delta){
     const ciclo = getCicloActivo(state.session.piscinaId);
     if (!ciclo) return;
@@ -1341,6 +1358,7 @@
     else if (action==="save-peso"){ handleSavePesoSesion(); }
     else if (action==="grid-resize"){ handleGridResize(Number(t.dataset.delta)); }
     else if (action==="bulk-fill"){ handleBulkFill(); }
+    else if (action==="bulk-fill-prof"){ handleBulkFillProf(); }
     else if (action==="edit-eficiencia"){ openEficienciaModal(t.dataset.pob); }
     else if (action==="save-eficiencia-modal"){ handleSaveEficienciaModal(t.dataset.pob); }
     else if (action==="remove-photo"){ handleRemovePhoto(); }

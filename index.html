@@ -115,7 +115,17 @@
   .empty-state svg{width:40px;height:40px;stroke:var(--ink-muted);margin-bottom:12px;}
   .empty-state p{margin:4px 0;font-size:13.5px;}
 
+  .pond-grid{display:grid;grid-template-columns:1fr;gap:0;}
+  @media (min-width:900px){
+    #app-root{max-width:1080px;}
+    #content{padding:14px 22px 92px;}
+    .pond-grid{grid-template-columns:repeat(3,1fr);gap:12px;align-items:start;}
+    .pond-grid .card{margin-bottom:0;}
+    .tab-btn{font-size:11.5px;}
+    .tab-btn svg{width:21px;height:21px;}
+  }
   .add-fab{position:fixed;left:50%;transform:translateX(calc(-50% + 210px));bottom:76px;z-index:15;}
+  @media (min-width:900px){ .add-fab{transform:translateX(calc(-50% + 490px));} }
   .add-fab button{width:52px;height:52px;border-radius:16px;border:none;background:var(--teal);color:#fff;
     font-size:26px;box-shadow:0 4px 10px rgba(8,79,79,.35);cursor:pointer;}
 
@@ -821,16 +831,49 @@
     return {clase:"mal", texto:fallos+" indicadores fuera"};
   }
 
+  // ordena piscinas por número (10 antes que 35, no alfabéticamente)
+  function piscinasOrdenadas(){
+    return [...state.piscinas].sort((a,b)=>
+      String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true, sensitivity:"base"}));
+  }
+
+  // detecta datos faltantes que impiden un cálculo correcto
+  function faltantesPiscina(p, ciclo, rows){
+    const f = [];
+    if (!p.area || Number(p.area)<=0) f.push("Falta el área de la piscina");
+    if (ciclo){
+      if (!ciclo.fechaSiembra) f.push("Falta la fecha de siembra del ciclo");
+      if (!ciclo.animales || Number(ciclo.animales)<=0) f.push("Faltan los animales sembrados");
+      if (!ciclo.area || Number(ciclo.area)<=0) f.push("El ciclo no tiene área registrada");
+    }
+    (rows||[]).forEach(r=>{
+      const etiqueta = r.pob.fecha ? fmtDate(r.pob.fecha) : "una población";
+      if (!r.pob.fecha) f.push("Hay una población sin fecha de muestreo");
+      if (r.peso==null) f.push("Falta el peso muestreado de "+etiqueta);
+      if (r.st.n>0 && r.st.n < LANCES_POR_POBLACION) f.push(etiqueta+": "+r.st.n+" de "+LANCES_POR_POBLACION+" lances");
+    });
+    // poblaciones registradas sin ningún lance
+    if (ciclo){
+      state.poblaciones.filter(x=>x.cicloId===ciclo.id && tirosLlenos(x).length===0).forEach(x=>{
+        f.push((x.fecha?fmtDate(x.fecha):"Una población")+" no tiene lances cargados");
+      });
+    }
+    return f;
+  }
+
   function renderPiscinasTab(){
-    if (!state.piscinas.length) return emptyState("Aún no registras piscinas.", "Agrega la primera para empezar.") + addPiscinaFab();
+    if (!state.piscinas.length) return emptyState("Aún no registras piscinas.", "Agrega la primera, o importa tu lista completa de una vez.")
+      + '<div class="row" style="margin:0 auto;max-width:340px;"><button class="btn btn-outline btn-sm" style="flex:1;" data-action="abrir-importar">⬆ Importar lista de piscinas</button></div>'
+      + addPiscinaFab();
 
     // ---- resumen de finca ----
     const activas = state.piscinas.filter(p=>getCicloActivo(p.id));
-    let totalHa = 0, totalBiomasa = 0, sobs = [], enCriterio = 0, conAlerta = 0;
+    let totalHa = 0, totalBiomasa = 0, sobs = [], enCriterio = 0, conAlerta = 0, conFaltantes = 0;
     activas.forEach(p=>{
       const c = getCicloActivo(p.id);
       const rows = buildPoblacionesConCalculo(c.id);
       totalHa += Number(c.area||0)/10000;
+      if (faltantesPiscina(p, c, rows).length) conFaltantes++;
       const u = rows[rows.length-1];
       if (u){
         if (u.biomasa!=null) totalBiomasa += u.biomasa;
@@ -850,18 +893,27 @@
         + '<div class="stat"><div class="value">'+enCriterio+' / '+activas.length+'</div><div class="label">En criterio</div></div>'
       + '</div>'
       + (conAlerta ? '<div class="legend-note" style="color:var(--amber);font-weight:600;">'+conAlerta+' piscina(s) con avisos de revisión.</div>' : "")
+      + (conFaltantes ? '<div class="legend-note" style="color:var(--red);font-weight:600;">'+conFaltantes+' piscina(s) con datos incompletos o sin fecha.</div>' : "")
       + '</div>') : "";
 
-    const cards = state.piscinas.map(p=>{
+    const cards = piscinasOrdenadas().map(p=>{
       const ciclo = getCicloActivo(p.id);
       const cerrados = ciclosDePiscina(p.id).filter(c=>c.estado==="cerrado").length;
-      let body, semaforo = '<span class="semaforo neutro"></span>';
+      let body, semaforo = '<span class="semaforo neutro"></span>', faltaHtml = "";
       if (ciclo){
         const rows = buildPoblacionesConCalculo(ciclo.id);
+        const faltantes = faltantesPiscina(p, ciclo, rows);
+        if (faltantes.length){
+          faltaHtml = '<div class="alert-box"><b>Datos incompletos</b><ul>'
+            + faltantes.slice(0,5).map(x=>'<li>'+escapeHtml(x)+'</li>').join("")
+            + (faltantes.length>5?'<li>… y '+(faltantes.length-5)+' más</li>':"")
+            + '</ul></div>';
+        }
         const dias = rows.map(r=>r.diasCultivo);
         const diasCultivo = daysBetween(ciclo.fechaSiembra, todayISO());
         const ultima = rows[rows.length-1];
-        const est = estadoPiscina(rows);
+        let est = estadoPiscina(rows);
+        if (faltantes.length && est.clase==="ok") est = {clase:"alerta", texto:"Faltan datos"};
         semaforo = '<span class="semaforo '+est.clase+'"></span>';
         const sobSerie = rows.filter(r=>r.sobrevivencia!=null).map(r=>r.sobrevivencia);
         const bioSerie = rows.filter(r=>r.biomasa!=null).map(r=>r.biomasa);
@@ -885,6 +937,7 @@
             + '</div>') : "")
           + (ultima && ultima.vsCurva!=null ? '<div class="legend-note">Peso vs. curva de referencia: <b>'+fmtPct(ultima.vsCurva)+'</b> ('+fmtNum(ultima.peso,1)+' g reales vs '+fmtNum(ultima.pesoRef,1)+' g esperados al día '+ultima.diasCultivo+')</div>' : "")
           + (proy ? '<div class="legend-note">Proyección al día '+state.planConfig.horizonte+': <b>'+fmtNum(proy.peso,1)+' g</b> · '+fmtNum(proy.biomasa,0)+' kg · '+fmtNum(proy.kgHa,0)+' kg/ha</div>' : "")
+          + faltaHtml
           + '<div class="row" style="margin-top:10px;">'
             + '<button class="btn btn-primary btn-sm" style="flex:1;" data-action="go-muestreo" data-piscina="'+p.id+'">+ Población</button>'
             + '<button class="btn btn-outline btn-sm" style="flex:1;" data-action="cerrar-ciclo" data-ciclo="'+ciclo.id+'">Cerrar ciclo</button>'
@@ -901,11 +954,14 @@
         + '</div></div>'
         + body + '</div>';
     }).join("");
-    return dashboard + cards + addPiscinaFab();
+    const barra = '<div class="row" style="margin-bottom:12px;">'
+      + '<button class="btn btn-outline btn-sm" style="flex:1;" data-action="abrir-importar">⬆ Importar lista de piscinas</button>'
+      + '</div>';
+    return dashboard + barra + '<div class="pond-grid">' + cards + '</div>' + addPiscinaFab();
   }
 
   function renderMuestreoTab(){
-    const piscinasConCiclo = state.piscinas.filter(p=>getCicloActivo(p.id));
+    const piscinasConCiclo = piscinasOrdenadas().filter(p=>getCicloActivo(p.id));
     if (!piscinasConCiclo.length) return emptyState("No hay piscinas con ciclo activo", "Ve a Piscinas e inicia un ciclo para poder registrar poblaciones.");
     if (!state.session.piscinaId || !getCicloActivo(state.session.piscinaId)) state.session.piscinaId = piscinasConCiclo[0].id;
     const ciclo = getCicloActivo(state.session.piscinaId);
@@ -1030,7 +1086,8 @@
       const kgHaPill = r.kgHa!=null ? pill(r.kgHa>=param.minKgHa, fmtNum(r.kgHa,0)+" kg/ha") : "";
       const cv = cvBadge(r.st.cv, param.maxCV);
       return '<div class="card accent">'
-        + '<div class="card-header"><div><h3>Piscina '+escapeHtml(nombrePiscina(r.ciclo.piscinaId))+'</h3><div class="muted">Ciclo '+r.ciclo.numero+' · '+fmtDate(r.pob.fecha)+' · '+r.st.n+' tiros</div></div></div>'
+        + '<div class="card-header"><div><h3>Piscina '+escapeHtml(nombrePiscina(r.ciclo.piscinaId))+'</h3><div class="muted">Ciclo '+r.ciclo.numero+' · '+r.st.n+' de '+LANCES_POR_POBLACION+' lances</div></div></div>'
+        + '<div class="field"><label>Fecha de muestreo</label><input type="date" data-field="pob-fecha" data-pob="'+r.pob.id+'" value="'+(r.pob.fecha||"")+'"></div>'
         + waterBar(r.diasCultivo, null)
         + '<div class="stat-grid" style="margin-top:12px;">'
           + '<div class="stat"><div class="value">'+fmtNum(r.st.mean,2)+'</div><div class="label">Media captura</div></div>'
@@ -1218,7 +1275,7 @@
   function renderHistorialTab(){
     if (!state.piscinas.length) return emptyState("Primero registra una piscina", "Ve a la pestaña Piscinas y agrega una.");
     if (!state.historialSel.piscinaId) state.historialSel.piscinaId = state.piscinas[0].id;
-    const piscinaChips = state.piscinas.map(p=>'<div class="chip '+(p.id===state.historialSel.piscinaId?"active":"")+'" data-action="hist-piscina" data-id="'+p.id+'">Piscina '+escapeHtml(p.nombre)+'</div>').join("");
+    const piscinaChips = piscinasOrdenadas().map(p=>'<div class="chip '+(p.id===state.historialSel.piscinaId?"active":"")+'" data-action="hist-piscina" data-id="'+p.id+'">Piscina '+escapeHtml(p.nombre)+'</div>').join("");
 
     const ciclos = ciclosDePiscina(state.historialSel.piscinaId);
     if (!ciclos.length) return '<div class="chip-select">'+piscinaChips+'</div>' + emptyState("Sin ciclos todavía", "Esta piscina aún no tiene ningún ciclo iniciado.");
@@ -1259,7 +1316,8 @@
       }).join("") + '</div>') : "";
 
     const poblacionesList = rows.map(r=>'<div class="card">'
-        + '<div class="card-header"><div><h3 style="font-size:14px;">'+fmtDate(r.pob.fecha)+'</h3><div class="muted">Día '+r.diasCultivo+' · '+r.st.n+' tiros</div></div>'+cvBadge(r.st.cv, state.parametros.maxCV)+'</div>'
+        + '<div class="card-header"><div><h3 style="font-size:14px;">'+(r.pob.fecha?fmtDate(r.pob.fecha):"Sin fecha")+'</h3><div class="muted">Día '+r.diasCultivo+' · '+r.st.n+' de '+LANCES_POR_POBLACION+' lances</div></div>'+cvBadge(r.st.cv, state.parametros.maxCV)+'</div>'
+        + '<div class="field"><label>Fecha de muestreo</label><input type="date" data-field="pob-fecha" data-pob="'+r.pob.id+'" value="'+(r.pob.fecha||"")+'"></div>'
         + '<div class="pond-wrap" style="max-width:200px;margin:0 auto 10px;">'+pondDiagram(tirosParaDiagrama(r.pob), {width:200, height:126, id:"pob-"+r.pob.id})+'</div>'
         + '<div class="stat-grid cols-3">'
           + '<div class="stat"><div class="value">'+fmtNum(r.st.mean,2)+'</div><div class="label">Media</div></div>'
@@ -1344,7 +1402,9 @@
     state.editingPiscinaId = id || null;
     openModal('<h3>'+(p?"Editar piscina":"Nueva piscina")+'</h3>'
       + '<div class="field"><label>Piscina (n°)</label><input type="text" id="pf-nombre" value="'+(p?escapeHtml(p.nombre):"")+'" placeholder="ej. 10"></div>'
-      + '<div class="field"><label>Área (m²)</label><input type="number" id="pf-area" value="'+(p?p.area:"")+'" placeholder="ej. 44400"></div>'
+      + '<div class="row"><div class="field" style="flex:2;"><label>Área</label><input type="number" step="0.01" id="pf-area" value="'+(p?p.area:"")+'" placeholder="ej. 44400"></div>'
+      + '<div class="field" style="flex:1;"><label>Unidad</label><select id="pf-area-unidad"><option value="m2" selected>m²</option><option value="ha">ha</option></select></div></div>'
+      + '<div class="legend-note" id="pf-area-preview" style="margin-top:-6px;margin-bottom:10px;">'+(p&&p.area?("Equivale a "+fmtNum(Number(p.area)/10000,3)+" ha"):"Elige la unidad en la que vas a escribir el área.")+'</div>'
       + '<div class="field"><label>Eficiencia de la atarraya en esta piscina (opcional)</label><input type="number" step="0.01" id="pf-eficiencia" value="'+(p&&p.eficiencia!=null?p.eficiencia:"")+'" placeholder="por defecto: '+state.parametros.eficiencia+'"></div>'
       + (p ? "" : '<div class="divider"></div><div class="legend-note" style="margin-bottom:8px;">Datos del primer ciclo:</div>'
         + '<div class="field"><label>Fecha de siembra</label><input type="date" id="pf-fecha" value="'+todayISO()+'"></div>'
@@ -1359,6 +1419,65 @@
       + '<p class="legend-note" style="margin-bottom:10px;">'+fmtDate(pob.fecha)+'. Se usa solo para el cálculo de esta población en particular.</p>'
       + '<div class="field"><label>Eficiencia (0 a 1)</label><input type="number" step="0.01" min="0" max="1" id="ef-modal-input" value="'+(pob.eficiencia!=null?pob.eficiencia:"")+'"></div>'
       + '<div class="modal-actions"><button class="btn btn-secondary" data-action="close-modal">Cancelar</button><button class="btn btn-primary" data-action="save-eficiencia-modal" data-pob="'+pobId+'">Guardar</button></div>');
+  }
+
+  // acepta 4,04 / 4.04 / 1.234,56
+  function parseNumeroLocal(s){
+    s = String(s).trim();
+    if (s.indexOf(",")!==-1 && s.indexOf(".")!==-1) s = s.replace(/\./g,"").replace(",",".");
+    else if (s.indexOf(",")!==-1) s = s.replace(",",".");
+    const v = parseFloat(s);
+    return isNaN(v) ? null : v;
+  }
+
+  function parseImportPiscinas(texto){
+    const filas = [], errores = [];
+    texto.split(/\r?\n/).forEach(linea=>{
+      const l = linea.trim();
+      if (!l) return;
+      if (/^piscina\b/i.test(l)) return;                       // encabezado
+      if (!/\d/.test(l)) return;                               // "(Has)" y similares
+      const partes = l.split(/[\t;]+|\s{2,}|\s+/).filter(Boolean);
+      if (partes.length < 2){ errores.push(l); return; }
+      const area = parseNumeroLocal(partes[partes.length-1]);
+      const nombre = partes.slice(0, partes.length-1).join(" ");
+      if (!nombre || area==null || area<=0){ errores.push(l); return; }
+      filas.push({nombre, area});
+    });
+    return {filas, errores};
+  }
+
+  function openImportarModal(){
+    openModal('<h3>Importar piscinas</h3>'
+      + '<p class="legend-note" style="margin-bottom:10px;">Pega la lista con el nombre de la piscina y su área, una por línea (tal como la tienes en tu tabla). Se omiten las que ya existen.</p>'
+      + '<div class="field"><label>Lista</label>'
+        + '<textarea id="imp-texto" rows="8" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--surface-2);font-family:var(--mono);font-size:12px;" placeholder="1-01\t4,04&#10;1-02\t4,06&#10;2-07\t4,47"></textarea></div>'
+      + '<div class="field"><label>Las áreas están en</label><select id="imp-unidad"><option value="ha" selected>Hectáreas (ha)</option><option value="m2">Metros cuadrados (m²)</option></select></div>'
+      + '<div class="legend-note" id="imp-preview">Pega la lista para ver cuántas piscinas se detectan.</div>'
+      + '<div class="modal-actions"><button class="btn btn-secondary" data-action="close-modal">Cancelar</button><button class="btn btn-primary" data-action="importar-piscinas">Importar</button></div>');
+  }
+
+  async function handleImportarPiscinas(){
+    const texto = document.getElementById("imp-texto").value || "";
+    const unidad = document.getElementById("imp-unidad").value;
+    const {filas, errores} = parseImportPiscinas(texto);
+    if (!filas.length){ showToast("No se detectaron piscinas en el texto."); return; }
+    const existentes = new Set(state.piscinas.map(p=>String(p.nombre).trim().toLowerCase()));
+    let nuevas = 0, repetidas = 0;
+    filas.forEach(f=>{
+      const clave = f.nombre.trim().toLowerCase();
+      if (existentes.has(clave)){ repetidas++; return; }
+      existentes.add(clave);
+      state.piscinas.push({ id: uid(), nombre: f.nombre, area: unidad==="ha" ? Math.round(f.area*10000*100)/100 : f.area, eficiencia: null });
+      nuevas++;
+    });
+    if (!nuevas){ showToast("Todas esas piscinas ya estaban registradas."); return; }
+    await storageSet("piscinas", state.piscinas);
+    closeModal();
+    showToast(nuevas+" piscina(s) importada(s)"
+      + (repetidas?" · "+repetidas+" ya existían":"")
+      + (errores.length?" · "+errores.length+" línea(s) no reconocida(s)":"")+".");
+    render();
   }
 
   function openCicloModal(piscinaId){
@@ -1380,7 +1499,10 @@
   // ---------- acciones ----------
   async function handleSavePiscina(){
     const nombre = document.getElementById("pf-nombre").value.trim();
-    const area = parseFloat(document.getElementById("pf-area").value);
+    const areaRaw = parseFloat(document.getElementById("pf-area").value);
+    const unidadEl = document.getElementById("pf-area-unidad");
+    const unidad = unidadEl ? unidadEl.value : "m2";
+    const area = (!isNaN(areaRaw) && unidad === "ha") ? Math.round(areaRaw*10000*100)/100 : areaRaw;
     const efVal = document.getElementById("pf-eficiencia").value;
     const eficiencia = efVal===""? null : parseFloat(efVal);
     if (!nombre || !area){ showToast("Completa piscina y área."); return; }
@@ -1681,6 +1803,29 @@
     showToast("Peso y eficiencia guardados."); render();
   }
 
+  async function handleFechaPoblacionChange(el){
+    const pob = state.poblaciones.find(x=>x.id===el.dataset.pob);
+    if (!pob) return;
+    const nueva = el.value;
+    if (!nueva){ showToast("La fecha no puede quedar vacía."); render(); return; }
+    if (nueva === pob.fecha) return;
+    const choque = state.poblaciones.find(x=>x.cicloId===pob.cicloId && x.fecha===nueva && x.id!==pob.id);
+    if (choque){
+      showToast("Ya hay otra población en ese ciclo con la fecha "+fmtDate(nueva)+".");
+      render(); return;
+    }
+    const ciclo = state.ciclos.find(c=>c.id===pob.cicloId);
+    if (ciclo && ciclo.fechaSiembra && daysBetween(ciclo.fechaSiembra, nueva) < 0){
+      if (!confirm("Esa fecha es anterior a la siembra ("+fmtDate(ciclo.fechaSiembra)+"). ¿Guardarla igual?")){ render(); return; }
+    }
+    const anterior = pob.fecha;
+    pob.fecha = nueva;
+    await storageSet("poblaciones", state.poblaciones);
+    if (state.session.fecha === anterior) state.session.fecha = nueva;
+    showToast("Fecha actualizada.");
+    render();
+  }
+
   async function handlePesoChange(el){
     const cicloId = el.dataset.ciclo, fecha = el.dataset.fecha;
     const pob = ensurePoblacion(cicloId, fecha);
@@ -1815,6 +1960,8 @@
     else if (action==="close-modal"){ closeModal(); }
     else if (action==="close-modal-overlay"){ if (e.target===t) closeModal(); }
     else if (action==="new-piscina"){ openPiscinaModal(null); }
+    else if (action==="abrir-importar"){ openImportarModal(); }
+    else if (action==="importar-piscinas"){ handleImportarPiscinas(); }
     else if (action==="edit-piscina"){ openPiscinaModal(t.dataset.id); }
     else if (action==="delete-piscina"){ handleDeletePiscina(t.dataset.id); }
     else if (action==="save-piscina"){ handleSavePiscina(); }
@@ -1849,6 +1996,31 @@
   });
 
   document.addEventListener("input", function(e){
+    if (e.target.id === "imp-texto"){
+      const prev = document.getElementById("imp-preview");
+      const uEl = document.getElementById("imp-unidad");
+      const u = uEl ? uEl.value : "ha";
+      const r = parseImportPiscinas(e.target.value || "");
+      if (prev){
+        const totalHa = r.filas.reduce((s,f)=>s+(u==="ha"?f.area:f.area/10000),0);
+        prev.textContent = r.filas.length
+          ? (r.filas.length+" piscina(s) detectada(s) · "+fmtNum(totalHa,2)+" ha en total"
+             + (r.errores.length?" · "+r.errores.length+" línea(s) no reconocida(s)":""))
+          : "No se detectaron piscinas todavía.";
+      }
+      return;
+    }
+    if (e.target.id === "pf-area"){
+      const unidadEl = document.getElementById("pf-area-unidad");
+      const u = unidadEl ? unidadEl.value : "m2";
+      const v = parseFloat(e.target.value);
+      const prev = document.getElementById("pf-area-preview");
+      if (prev){
+        prev.textContent = isNaN(v) ? "Elige la unidad en la que vas a escribir el área."
+          : (u==="ha" ? ("Equivale a "+fmtNum(v*10000,0)+" m²") : ("Equivale a "+fmtNum(v/10000,3)+" ha"));
+      }
+      return;
+    }
     if (e.target.id === "set-radio"){
       const r = parseFloat(e.target.value) || 0;
       const preview = document.getElementById("area-calc-preview");
@@ -1857,9 +2029,17 @@
   });
 
   document.addEventListener("change", function(e){
+    if (e.target.id === "pf-area-unidad"){
+      const v = parseFloat(document.getElementById("pf-area").value);
+      const prev = document.getElementById("pf-area-preview");
+      if (prev) prev.textContent = isNaN(v) ? "Elige la unidad en la que vas a escribir el área."
+        : (e.target.value==="ha" ? ("Equivale a "+fmtNum(v*10000,0)+" m²") : ("Equivale a "+fmtNum(v/10000,3)+" ha"));
+      return;
+    }
     if (e.target.id === "session-piscina"){ state.session.piscinaId = e.target.value; state.photoStatus = null; render(); }
     else if (e.target.id === "session-fecha"){ state.session.fecha = e.target.value; state.photoStatus = null; render(); }
     else if (e.target.dataset && e.target.dataset.field === "peso"){ handlePesoChange(e.target); }
+    else if (e.target.dataset && e.target.dataset.field === "pob-fecha"){ handleFechaPoblacionChange(e.target); }
     else if (e.target.dataset && e.target.dataset.field === "grid-captura"){ handleGridCellChange(Number(e.target.dataset.idx), "captura", e.target.value); }
     else if (e.target.dataset && e.target.dataset.field === "grid-profundidad"){ handleGridCellChange(Number(e.target.dataset.idx), "profundidad", e.target.value); }
     else if (e.target.id === "photo-input"){ handlePhotoSelected(e.target); }

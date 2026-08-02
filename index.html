@@ -48,10 +48,10 @@
 
   .tabbar{position:sticky;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--surface-2);
     display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
-  .tab-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;
-    background:none;border:none;color:var(--ink-muted);font-family:var(--sans);font-size:10.5px;font-weight:600;
+  .tab-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 1px;
+    background:none;border:none;color:var(--ink-muted);font-family:var(--sans);font-size:9.5px;font-weight:600;
     border-radius:10px;cursor:pointer;}
-  .tab-btn svg{width:20px;height:20px;stroke:var(--ink-muted);fill:none;stroke-width:1.8;}
+  .tab-btn svg{width:19px;height:19px;stroke:var(--ink-muted);fill:none;stroke-width:1.8;}
   .tab-btn.active{color:var(--teal-dark);background:var(--teal-light);}
   .tab-btn.active svg{stroke:var(--teal-dark);}
 
@@ -171,6 +171,26 @@
   .grid-cell input.gc-captura{font-weight:700;}
   .grid-cell input.gc-prof{font-size:10.5px;color:var(--ink-muted);}
 
+  .grid-cell.atipico{outline:2px solid var(--amber);outline-offset:-2px;}
+  .grid-cell.excluido{opacity:.45;}
+  .grid-cell.excluido input{text-decoration:line-through;}
+  .cell-flag{position:absolute;top:2px;right:5px;font-size:9px;line-height:1;cursor:pointer;
+    background:none;border:none;padding:2px;}
+  .alert-box{background:var(--amber-light);border-left:4px solid var(--amber);border-radius:10px;
+    padding:10px 12px;margin:10px 0;font-size:12px;line-height:1.55;color:var(--ink);}
+  .alert-box.grave{background:var(--red-light);border-left-color:var(--red);}
+  .alert-box ul{margin:4px 0 0;padding-left:16px;}
+  .ci-note{font-family:var(--mono);font-size:11px;color:var(--ink-muted);margin-top:4px;}
+  .cmp-table{width:100%;border-collapse:collapse;font-size:12px;}
+  .cmp-table th{background:var(--teal-soft);font-family:var(--mono);font-size:10px;text-transform:uppercase;
+    letter-spacing:.03em;padding:7px 5px;text-align:right;color:var(--ink-muted);}
+  .cmp-table th:first-child,.cmp-table td:first-child{text-align:left;}
+  .cmp-table td{padding:7px 5px;text-align:right;border-top:1px solid var(--surface-2);font-family:var(--mono);}
+  .cmp-table tr.destacado td{background:var(--green-light);}
+  .semaforo{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0;}
+  .semaforo.ok{background:var(--green);} .semaforo.alerta{background:var(--amber);} .semaforo.mal{background:var(--red);}
+  .semaforo.neutro{background:var(--ink-muted);opacity:.4;}
+
   .photo-btn{display:flex;align-items:center;justify-content:center;gap:8px;}
   .photo-preview{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--surface-2);}
   .photo-preview img{width:100%;display:block;max-height:260px;object-fit:cover;}
@@ -212,6 +232,10 @@
       <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg>
       Resumen
     </button>
+    <button class="tab-btn" data-action="switch-tab" data-tab="siembras">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M8 2v4M16 2v4M3 10h18M8 14h3M8 18h3"></path></svg>
+      Siembras
+    </button>
     <button class="tab-btn" data-action="switch-tab" data-tab="historial">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>
       Historial
@@ -229,7 +253,8 @@
   const state = {
     farmId: null,
     piscinas: [], ciclos: [], poblaciones: [],
-    parametros: { radioAtarraya: 2.44, eficiencia: 0.4, minSobrevivencia: 0.75, minCrecimiento: 2.6, minKgHa: 1700, maxCV: 30 },
+    parametros: { radioAtarraya: 2.44, eficiencia: 0.4, minSobrevivencia: 0.75, minCrecimiento: 2.6, minKgHa: 1700, maxCV: 30,
+      estimador: "auto", precisionObjetivo: 10, gompertz: { a: 16.70, b: 5.69, c: 0.0884 } },
     currentTab: "piscinas",
     session: { piscinaId: null, fecha: todayISO() },
     historialSel: { piscinaId: null, cicloId: null },
@@ -242,6 +267,7 @@
     fotos: {},
     diagStatus: null,
     backupConfig: { url: null, lastBackup: null },
+    planConfig: { diaInicial: 8, intervalo: 35, porDia: 3, horizonte: 120 },
   };
 
   function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2)); }
@@ -253,10 +279,38 @@
   function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
   // ---------- estadística: media, mediana, moda, desviación, coeficiente de variación ----------
+  function quantile(sorted, q){
+    if (!sorted.length) return null;
+    const pos = (sorted.length-1)*q, base = Math.floor(pos), rest = pos-base;
+    return sorted[base+1]!==undefined ? sorted[base]+rest*(sorted[base+1]-sorted[base]) : sorted[base];
+  }
+  // t de Student al 95% (bilateral) por grados de libertad
+  function tCrit95(df){
+    if (df < 1) return null;
+    const tbl = {1:12.71,2:4.303,3:3.182,4:2.776,5:2.571,6:2.447,7:2.365,8:2.306,9:2.262,10:2.228,
+      11:2.201,12:2.179,13:2.160,14:2.145,15:2.131,16:2.120,17:2.110,18:2.101,19:2.093,20:2.086,
+      25:2.060,30:2.042,40:2.021,60:2.000,120:1.980};
+    if (tbl[df]) return tbl[df];
+    const keys = Object.keys(tbl).map(Number).sort((a,b)=>a-b);
+    if (df > keys[keys.length-1]) return 1.96;
+    for (let i=0;i<keys.length-1;i++){
+      if (df>keys[i] && df<keys[i+1]){
+        const k0=keys[i], k1=keys[i+1];
+        return tbl[k0] + (df-k0)/(k1-k0)*(tbl[k1]-tbl[k0]);
+      }
+    }
+    return 1.96;
+  }
+  // tiros necesarios para alcanzar una precisión relativa objetivo con el CV observado
+  function nRequerido(cv, precisionPct){
+    if (cv==null || !precisionPct) return null;
+    return Math.ceil(Math.pow(1.96*cv/precisionPct, 2));
+  }
+
   function stats(arr){
     const nums = arr.map(Number).filter(v=>!isNaN(v));
     const n = nums.length;
-    if (!n) return {n:0, mean:null, median:null, moda:null, std:null, cv:null};
+    if (!n) return {n:0, mean:null, median:null, moda:null, std:null, cv:null, q1:null, q3:null, iqr:null, sem:null, ic:null};
     const mean = nums.reduce((a,b)=>a+b,0)/n;
     const sorted = [...nums].sort((a,b)=>a-b);
     const mid = Math.floor(n/2);
@@ -269,7 +323,46 @@
     const variance = n>1 ? nums.reduce((s,v)=>s+Math.pow(v-mean,2),0)/(n-1) : 0;
     const std = Math.sqrt(variance);
     const cv = mean ? (std/mean)*100 : null;
-    return {n, mean, median, moda, std, cv};
+    const q1 = quantile(sorted, 0.25), q3 = quantile(sorted, 0.75);
+    const iqr = (q1!=null && q3!=null) ? q3-q1 : null;
+    const sem = n>1 ? std/Math.sqrt(n) : null;
+    const t = n>1 ? tCrit95(n-1) : null;
+    const ic = (sem!=null && t!=null) ? {margen: t*sem, lo: mean-t*sem, hi: mean+t*sem} : null;
+    return {n, mean, median, moda, std, cv, q1, q3, iqr, sem, ic};
+  }
+  // límites de Tukey para detectar tiros atípicos
+  function limitesAtipicos(valores){
+    const st = stats(valores);
+    if (st.iqr==null || st.n < 4) return null;
+    return {lo: st.q1 - 1.5*st.iqr, hi: st.q3 + 1.5*st.iqr};
+  }
+  function indicesAtipicos(pob){
+    const activos = pob.tiros.map((t,i)=>({t,i})).filter(x=>x.t.captura!=null && x.t.captura!=="" && !isNaN(Number(x.t.captura)) && !x.t.excluido);
+    const lim = limitesAtipicos(activos.map(x=>Number(x.t.captura)));
+    if (!lim) return [];
+    return activos.filter(x=>{ const v=Number(x.t.captura); return v<lim.lo || v>lim.hi; }).map(x=>x.i);
+  }
+
+  // ---------- curva de crecimiento de referencia (Gompertz) ----------
+  function gompertz(t){
+    const g = state.parametros.gompertz;
+    return g.a * Math.exp(-g.b * Math.exp(-g.c * t));
+  }
+
+  function sparkline(values, color){
+    if (!values || values.length<2) return "";
+    const w=92,h=26,pad=3;
+    const min=Math.min(...values), max=Math.max(...values), rng=(max-min)||1;
+    const pts=values.map((v,i)=>{
+      const x=pad+(i/(values.length-1))*(w-2*pad);
+      const y=h-pad-((v-min)/rng)*(h-2*pad);
+      return x.toFixed(1)+","+y.toFixed(1);
+    }).join(" ");
+    const last=values[values.length-1];
+    const lx=w-pad, ly=h-pad-((last-min)/rng)*(h-2*pad);
+    return '<svg viewBox="0 0 '+w+' '+h+'" style="width:92px;height:26px;">'
+      +'<polyline points="'+pts+'" fill="none" stroke="'+(color||"#0E7C7B")+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+      +'<circle cx="'+lx.toFixed(1)+'" cy="'+ly.toFixed(1)+'" r="2.6" fill="'+(color||"#0E7C7B")+'"/></svg>';
   }
   function fmtModa(moda){ return moda ? moda.map(m=>fmtNum(m,0)).join(", ") : "—"; }
 
@@ -482,9 +575,9 @@
   }
 
   async function loadAll(){
-    const [p, c, pob, param, backup, initFlag] = await Promise.all([
+    const [p, c, pob, param, backup, initFlag, planCfg] = await Promise.all([
       storageGet("piscinas", null), storageGet("ciclos", null), storageGet("poblaciones", null), storageGet("parametros", null),
-      storageGet("backupConfig", null), storageGet("appInitialized", false),
+      storageGet("backupConfig", null), storageGet("appInitialized", false), storageGet("planConfig", null),
     ]);
     if (p === null && !initFlag){
       // primera vez real: no hay banderas de uso previo, se puede sembrar el ejemplo con seguridad
@@ -505,6 +598,7 @@
       if (!initFlag) await storageSet("appInitialized", true);
     }
     if (backup) state.backupConfig = Object.assign({}, state.backupConfig, backup);
+    if (planCfg) state.planConfig = Object.assign({}, state.planConfig, planCfg);
     if (state.piscinas.length){ state.historialSel.piscinaId = state.piscinas[0].id; }
     state.loaded = true;
   }
@@ -525,7 +619,8 @@
     }
     return pob;
   }
-  function tirosLlenos(pob){ return pob.tiros.filter(t=>t.captura!=null && t.captura!=="" && !isNaN(Number(t.captura))); }
+  function tirosLlenos(pob){ return pob.tiros.filter(t=>t.captura!=null && t.captura!=="" && !isNaN(Number(t.captura)) && !t.excluido); }
+  function tirosExcluidos(pob){ return pob.tiros.filter(t=>t.excluido && t.captura!=null && t.captura!==""); }
   function resizeGrid(pob, delta){
     const newLen = Math.max(4, Math.min(32, pob.tiros.length + delta));
     if (newLen < pob.tiros.length){
@@ -559,15 +654,37 @@
         : (piscina && piscina.eficiencia!=null && piscina.eficiencia!=="") ? Number(piscina.eficiencia)
         : state.parametros.eficiencia;
       const areaCorregida = areaAtarraya * eficiencia;
-      const camXm2 = (areaCorregida && st.mean!=null) ? st.mean/areaCorregida : null;
+
+      // estimador central: media, mediana, o automático (mediana cuando la dispersión es alta)
+      const modo = state.parametros.estimador || "auto";
+      const usaMediana = modo==="mediana" || (modo==="auto" && st.cv!=null && st.cv > state.parametros.maxCV);
+      const central = usaMediana ? st.median : st.mean;
+      const estimadorUsado = usaMediana ? "mediana" : "media";
+
+      const camXm2 = (areaCorregida && central!=null) ? central/areaCorregida : null;
       const sobrevivencia = (animalesM2 && camXm2!=null) ? camXm2/animalesM2 : null;
+
+      // intervalo de confianza 95% de la sobrevivencia (propagado desde el IC de la captura media)
+      let sobIC = null;
+      if (st.ic && animalesM2 && areaCorregida){
+        sobIC = { lo: (st.ic.lo/areaCorregida)/animalesM2, hi: (st.ic.hi/areaCorregida)/animalesM2 };
+      }
+      const nReq = nRequerido(st.cv, state.parametros.precisionObjetivo);
+
       const diasCultivo = daysBetween(ciclo.fechaSiembra, pob.fecha);
       const peso = (pob.peso!=null && pob.peso!=="") ? Number(pob.peso) : null;
       const biomasa = (peso!=null && camXm2!=null) ? ciclo.area*camXm2*(peso/1000) : null;
       const kgHa = biomasa!=null ? biomasa/(ciclo.area/10000) : null;
       const pares = paresCapturaProfundidad(pob);
       const corr = pearsonCorr(pares.map(t=>Number(t.captura)), pares.map(t=>Number(t.profundidad)));
-      return { pob, st, profProm, camXm2, sobrevivencia, diasCultivo, peso, biomasa, kgHa, crecimiento:null, corr, corrAcumulada:null, eficiencia };
+
+      // comparación contra la curva de referencia
+      const pesoRef = diasCultivo>0 ? gompertz(diasCultivo) : null;
+      const vsCurva = (peso!=null && pesoRef) ? peso/pesoRef : null;
+      const atipicos = indicesAtipicos(pob).length;
+
+      return { pob, st, profProm, camXm2, sobrevivencia, sobIC, nReq, diasCultivo, peso, biomasa, kgHa,
+        crecimiento:null, corr, corrAcumulada:null, eficiencia, estimadorUsado, pesoRef, vsCurva, atipicos, alertas: [] };
     });
     for (let i=1;i<rows.length;i++){
       const prev=rows[i-1], cur=rows[i];
@@ -576,6 +693,30 @@
         cur.crecimiento = semanas>0 ? (cur.peso-prev.peso)/semanas : null;
       }
     }
+    // ---- alertas de coherencia física ----
+    rows.forEach((r,i)=>{
+      if (r.sobrevivencia!=null && r.sobrevivencia > 1.0){
+        r.alertas.push("Sobrevivencia mayor a 100%: revisa área de la piscina, animales sembrados o eficiencia.");
+      }
+      if (i>0){
+        const prev = rows[i-1];
+        if (prev.sobrevivencia!=null && r.sobrevivencia!=null && r.sobrevivencia > prev.sobrevivencia + 0.02){
+          r.alertas.push("La sobrevivencia subió respecto a la población anterior ("+fmtPct(prev.sobrevivencia)+" → "+fmtPct(r.sobrevivencia)+"): no es posible salvo error de muestreo o de parámetros.");
+        }
+        if (prev.peso!=null && r.peso!=null && r.peso < prev.peso){
+          r.alertas.push("El peso promedio bajó respecto a la población anterior: revisa la biometría.");
+        }
+      }
+      if (r.st.n>0 && r.st.n < 6){
+        r.alertas.push("Sólo "+r.st.n+" tiros: la estimación es poco confiable.");
+      }
+      if (r.nReq!=null && r.st.n>0 && r.nReq > r.st.n){
+        r.alertas.push("Para ±"+fmtNum(state.parametros.precisionObjetivo,0)+"% de precisión harían falta ~"+r.nReq+" tiros (tienes "+r.st.n+").");
+      }
+      if (r.atipicos>0){
+        r.alertas.push(r.atipicos+" tiro(s) atípico(s) detectado(s) — puedes excluirlos desde Muestreo.");
+      }
+    });
     // correlación acumulada: se va construyendo con todos los pares captura-profundidad del ciclo hasta cada fecha
     let accCap = [], accProf = [];
     rows.forEach(r=>{
@@ -633,12 +774,13 @@
   // ---------- render principal ----------
   function render(){
     document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab===state.currentTab));
-    const subs = {piscinas:"Piscinas y ciclos", muestreo:"Captura de tiros de atarraya", resumen:"Cálculo automático del ciclo activo", historial:"Ciclos guardados"};
+    const subs = {piscinas:"Piscinas y ciclos", muestreo:"Captura de tiros de atarraya", resumen:"Cálculo automático del ciclo activo", siembras:"Lotes de siembra y plan de campo", historial:"Ciclos guardados"};
     document.getElementById("header-sub").textContent = subs[state.currentTab] || "";
     const content = document.getElementById("content");
     if (state.currentTab==="piscinas") content.innerHTML = renderPiscinasTab();
     else if (state.currentTab==="muestreo") content.innerHTML = renderMuestreoTab();
     else if (state.currentTab==="resumen") content.innerHTML = renderResumenTab();
+    else if (state.currentTab==="siembras") content.innerHTML = renderSiembrasTab();
     else content.innerHTML = renderHistorialTab();
   }
 
@@ -649,24 +791,87 @@
   }
   function addPiscinaFab(){ return '<div class="add-fab"><button data-action="new-piscina" aria-label="Agregar piscina">+</button></div>'; }
 
+  // semáforo global de una piscina activa según los criterios del usuario
+  function estadoPiscina(rows){
+    if (!rows.length) return {clase:"neutro", texto:"Sin poblaciones"};
+    const u = rows[rows.length-1];
+    const p = state.parametros;
+    if (u.alertas.some(a=>a.indexOf("mayor a 100%")!==-1)) return {clase:"mal", texto:"Datos incoherentes"};
+    let fallos = 0;
+    if (u.sobrevivencia!=null && u.sobrevivencia < p.minSobrevivencia) fallos++;
+    if (u.kgHa!=null && u.kgHa < p.minKgHa) fallos++;
+    if (u.crecimiento!=null && u.crecimiento < p.minCrecimiento) fallos++;
+    if (u.st.cv!=null && u.st.cv > p.maxCV) fallos++;
+    if (fallos===0) return {clase:"ok", texto:"En criterio"};
+    if (fallos===1) return {clase:"alerta", texto:"1 indicador fuera"};
+    return {clase:"mal", texto:fallos+" indicadores fuera"};
+  }
+
   function renderPiscinasTab(){
     if (!state.piscinas.length) return emptyState("Aún no registras piscinas.", "Agrega la primera para empezar.") + addPiscinaFab();
+
+    // ---- resumen de finca ----
+    const activas = state.piscinas.filter(p=>getCicloActivo(p.id));
+    let totalHa = 0, totalBiomasa = 0, sobs = [], enCriterio = 0, conAlerta = 0;
+    activas.forEach(p=>{
+      const c = getCicloActivo(p.id);
+      const rows = buildPoblacionesConCalculo(c.id);
+      totalHa += Number(c.area||0)/10000;
+      const u = rows[rows.length-1];
+      if (u){
+        if (u.biomasa!=null) totalBiomasa += u.biomasa;
+        if (u.sobrevivencia!=null) sobs.push(u.sobrevivencia);
+        const e = estadoPiscina(rows);
+        if (e.clase==="ok") enCriterio++;
+        if (u.alertas.length) conAlerta++;
+      }
+    });
+    const sobProm = sobs.length ? sobs.reduce((a,b)=>a+b,0)/sobs.length : null;
+    const dashboard = activas.length ? ('<div class="card accent">'
+      + '<div class="card-header"><div><h3 style="font-size:15px;">Resumen de finca</h3><div class="muted">'+activas.length+' piscina(s) en cultivo</div></div></div>'
+      + '<div class="stat-grid">'
+        + '<div class="stat"><div class="value">'+fmtNum(totalHa,2)+' ha</div><div class="label">Área activa</div></div>'
+        + '<div class="stat"><div class="value">'+(sobProm!=null?fmtPct(sobProm):"—")+'</div><div class="label">Sobrev. promedio</div></div>'
+        + '<div class="stat"><div class="value">'+fmtNum(totalBiomasa,0)+' kg</div><div class="label">Biomasa estimada</div></div>'
+        + '<div class="stat"><div class="value">'+enCriterio+' / '+activas.length+'</div><div class="label">En criterio</div></div>'
+      + '</div>'
+      + (conAlerta ? '<div class="legend-note" style="color:var(--amber);font-weight:600;">'+conAlerta+' piscina(s) con avisos de revisión.</div>' : "")
+      + '</div>') : "";
+
     const cards = state.piscinas.map(p=>{
       const ciclo = getCicloActivo(p.id);
       const cerrados = ciclosDePiscina(p.id).filter(c=>c.estado==="cerrado").length;
-      let body;
+      let body, semaforo = '<span class="semaforo neutro"></span>';
       if (ciclo){
         const rows = buildPoblacionesConCalculo(ciclo.id);
         const dias = rows.map(r=>r.diasCultivo);
         const diasCultivo = daysBetween(ciclo.fechaSiembra, todayISO());
         const ultima = rows[rows.length-1];
-        body = '<div class="pill neutral" style="margin-bottom:10px;">Ciclo '+ciclo.numero+' · activo</div>'
+        const est = estadoPiscina(rows);
+        semaforo = '<span class="semaforo '+est.clase+'"></span>';
+        const sobSerie = rows.filter(r=>r.sobrevivencia!=null).map(r=>r.sobrevivencia);
+        const bioSerie = rows.filter(r=>r.biomasa!=null).map(r=>r.biomasa);
+        // proyección con la curva de referencia
+        const pesoProy = gompertz(state.planConfig.horizonte);
+        const proy = (ultima && ultima.camXm2!=null)
+          ? { peso: pesoProy, biomasa: ciclo.area*ultima.camXm2*(pesoProy/1000),
+              kgHa: (ciclo.area*ultima.camXm2*(pesoProy/1000))/(ciclo.area/10000) } : null;
+        body = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+            + '<span class="pill neutral">Ciclo '+ciclo.numero+' · '+est.texto+'</span>'
+            + (ultima && ultima.alertas.length ? '<span class="pill warn">'+ultima.alertas.length+' aviso(s)</span>' : "")
+          + '</div>'
           + waterBar(diasCultivo, dias)
           + '<div class="stat-grid">'
             + '<div class="stat"><div class="value">'+rows.length+'</div><div class="label">Poblaciones</div></div>'
             + '<div class="stat"><div class="value">'+(ultima?fmtPct(ultima.sobrevivencia):"—")+'</div><div class="label">Última sobrevivencia</div></div>'
           + '</div>'
-          + '<div class="row">'
+          + (sobSerie.length>1 || bioSerie.length>1 ? ('<div style="display:flex;gap:10px;margin:8px 0;">'
+              + (sobSerie.length>1 ? '<div style="flex:1;"><div class="label" style="font-size:9.5px;color:var(--ink-muted);text-transform:uppercase;">Sobrevivencia</div>'+sparkline(sobSerie,"#0E7C7B")+'</div>' : "")
+              + (bioSerie.length>1 ? '<div style="flex:1;"><div class="label" style="font-size:9.5px;color:var(--ink-muted);text-transform:uppercase;">Biomasa</div>'+sparkline(bioSerie,"#B45309")+'</div>' : "")
+            + '</div>') : "")
+          + (ultima && ultima.vsCurva!=null ? '<div class="legend-note">Peso vs. curva de referencia: <b>'+fmtPct(ultima.vsCurva)+'</b> ('+fmtNum(ultima.peso,1)+' g reales vs '+fmtNum(ultima.pesoRef,1)+' g esperados al día '+ultima.diasCultivo+')</div>' : "")
+          + (proy ? '<div class="legend-note">Proyección al día '+state.planConfig.horizonte+': <b>'+fmtNum(proy.peso,1)+' g</b> · '+fmtNum(proy.biomasa,0)+' kg · '+fmtNum(proy.kgHa,0)+' kg/ha</div>' : "")
+          + '<div class="row" style="margin-top:10px;">'
             + '<button class="btn btn-primary btn-sm" style="flex:1;" data-action="go-muestreo" data-piscina="'+p.id+'">+ Población</button>'
             + '<button class="btn btn-outline btn-sm" style="flex:1;" data-action="cerrar-ciclo" data-ciclo="'+ciclo.id+'">Cerrar ciclo</button>'
           + '</div>';
@@ -675,14 +880,14 @@
           + '<button class="btn btn-primary btn-sm" data-action="nuevo-ciclo" data-piscina="'+p.id+'">Iniciar ciclo</button>';
       }
       return '<div class="card '+(ciclo?"accent":"accent-closed")+'">'
-        + '<div class="card-header"><div><h3>Piscina '+escapeHtml(p.nombre)+'</h3><div class="muted">'+fmtNum(p.area,0)+' m² · '+cerrados+' ciclo(s) en historial</div></div>'
+        + '<div class="card-header"><div><h3 style="display:flex;align-items:center;">'+semaforo+'Piscina '+escapeHtml(p.nombre)+'</h3><div class="muted">'+fmtNum(p.area,0)+' m² · '+cerrados+' ciclo(s) en historial</div></div>'
         + '<div style="display:flex;gap:6px;">'
           + '<button class="icon-btn" style="width:32px;height:32px;background:var(--surface-2);" data-action="edit-piscina" data-id="'+p.id+'"><svg viewBox="0 0 24 24" stroke-width="1.8" stroke="var(--ink)"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg></button>'
           + '<button class="icon-btn" style="width:32px;height:32px;background:var(--surface-2);" data-action="delete-piscina" data-id="'+p.id+'"><svg viewBox="0 0 24 24" stroke-width="1.8" stroke="var(--ink)"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg></button>'
         + '</div></div>'
         + body + '</div>';
     }).join("");
-    return cards + addPiscinaFab();
+    return dashboard + cards + addPiscinaFab();
   }
 
   function renderMuestreoTab(){
@@ -701,24 +906,43 @@
     const cMin = capturasLlenas.length ? Math.min(...capturasLlenas) : 0;
     const cMax = capturasLlenas.length ? Math.max(...capturasLlenas) : 1;
 
+    const idxAtipicos = indicesAtipicos(pob);
     const cells = pob.tiros.map((t,i)=>{
       const hasVal = t.captura!=null && t.captura!=="" && !isNaN(Number(t.captura));
       let bg = "rgba(255,255,255,.6)";
-      if (hasVal){
+      if (hasVal && !t.excluido){
         const norm = cMax>cMin ? (Number(t.captura)-cMin)/(cMax-cMin) : 0.5;
         bg = interpolateColor("#FFFFFF", "#8FC7BE", norm);
       }
-      return '<div class="grid-cell" style="background:'+bg+'">'
-        + '<div class="grid-cell-num">'+(i+1)+'</div>'
+      const esAtipico = idxAtipicos.indexOf(i) !== -1;
+      const cls = "grid-cell" + (esAtipico?" atipico":"") + (t.excluido?" excluido":"");
+      const flag = hasVal
+        ? '<button class="cell-flag" data-action="toggle-excluir" data-idx="'+i+'" title="'+(t.excluido?"Volver a incluir":"Excluir este tiro")+'">'+(t.excluido?"↩":(esAtipico?"⚠":"✕"))+'</button>'
+        : "";
+      return '<div class="'+cls+'" style="background:'+bg+'">'
+        + '<div class="grid-cell-num">'+(i+1)+'</div>' + flag
         + '<input type="number" inputmode="numeric" class="gc-captura" data-idx="'+i+'" data-field="grid-captura" placeholder="captura" value="'+(t.captura!=null?t.captura:"")+'">'
         + '<input type="number" inputmode="numeric" class="gc-prof" data-idx="'+i+'" data-field="grid-profundidad" placeholder="prof. cm" value="'+(t.profundidad!=null?t.profundidad:"")+'">'
         + '</div>';
     }).join("");
+    const nExcluidos = tirosExcluidos(pob).length;
+    const accionesAtipicos = (idxAtipicos.length || nExcluidos)
+      ? ('<div style="display:flex;gap:8px;margin-top:8px;">'
+          + (idxAtipicos.length ? '<button class="btn btn-outline btn-sm" style="flex:1;" data-action="excluir-atipicos">Excluir '+idxAtipicos.length+' atípico(s)</button>' : "")
+          + (nExcluidos ? '<button class="btn btn-outline btn-sm" style="flex:1;" data-action="restaurar-excluidos">Restaurar '+nExcluidos+' excluido(s)</button>' : "")
+        + '</div>') : "";
 
     const pares = paresCapturaProfundidad(pob);
     const profs = pares.map(t=>Number(t.profundidad));
     const profProm = profs.length ? profs.reduce((a,b)=>a+b,0)/profs.length : null;
     const corr = pearsonCorr(pares.map(t=>Number(t.captura)), profs);
+
+    const filaCalc = buildPoblacionesConCalculo(ciclo.id).find(r=>r.pob.id===pob.id);
+    const nReq = nRequerido(st.cv, state.parametros.precisionObjetivo);
+    const alertasHtml = (filaCalc && filaCalc.alertas.length)
+      ? ('<div class="alert-box'+(filaCalc.sobrevivencia>1?' grave':'')+'"><b>Revisar:</b><ul>'
+          + filaCalc.alertas.map(a=>'<li>'+escapeHtml(a)+'</li>').join("") + '</ul></div>')
+      : "";
 
     const statsPanel = st.n ? ('<div class="stats-panel">'
         + '<div class="stat-grid cols-3">'
@@ -727,9 +951,13 @@
           + '<div class="stat"><div class="value">'+fmtModa(st.moda)+'</div><div class="label">Moda</div></div>'
         + '</div>'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">'
-          + '<span class="legend-note">Desv. est. '+fmtNum(st.std,2)+'</span>'
+          + '<span class="legend-note">Desv. est. '+fmtNum(st.std,2)+(nExcluidos?" · "+nExcluidos+" excluido(s)":"")+'</span>'
           + (st.cv!=null ? pill(cvOk, "CV "+fmtNum(st.cv,1)+"%") : "")
         + '</div>'
+        + (st.ic ? '<div class="ci-note">Captura media: '+fmtNum(st.mean,1)+' ± '+fmtNum(st.ic.margen,1)+' (IC 95%: '+fmtNum(st.ic.lo,1)+' – '+fmtNum(st.ic.hi,1)+')</div>' : "")
+        + ((filaCalc && filaCalc.sobIC) ? '<div class="ci-note">Sobrevivencia: '+fmtPct(filaCalc.sobrevivencia)+' (IC 95%: '+fmtPct(filaCalc.sobIC.lo)+' – '+fmtPct(filaCalc.sobIC.hi)+')</div>' : "")
+        + (nReq!=null ? '<div class="ci-note">Para ±'+fmtNum(state.parametros.precisionObjetivo,0)+'% harían falta ~'+nReq+' tiros'+(nReq<=st.n?' ✓ (ya alcanzado)':'')+'</div>' : "")
+        + (filaCalc ? '<div class="ci-note">Estimador aplicado: '+filaCalc.estimadorUsado+'</div>' : "")
         + (st.cv!=null ? '<div class="legend-note" style="margin-top:6px;">'+(cvOk?"Datos consistentes: los tiros no varían demasiado entre sí.":"Alta variabilidad entre tiros — revisa si hay tiros atípicos antes de cerrar la población.")+'</div>' : "")
         + '<div class="divider" style="margin:10px 0;"></div>'
         + '<div class="stat-grid">'
@@ -761,6 +989,8 @@
           + '<textarea id="bulk-input-prof" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--surface-2);font-family:var(--mono);font-size:13px;" placeholder="ej. 90 100 85 90 100 95 100 130"></textarea></div>'
         + '<button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:12px;" data-action="bulk-fill-prof">⚡ Rellenar profundidades con estos valores</button>'
         + '<div class="pond-table"><div class="grid-cells">'+cells+'</div></div>'
+        + accionesAtipicos
+        + alertasHtml
         + statsPanel
         + '<div class="divider"></div>'
         + '<div class="row"><div class="field"><label>Peso muestreado (g)</label><input type="number" step="0.1" min="0" id="input-peso" value="'+(pob.peso!=null?pob.peso:"")+'" placeholder="ej. 5.8"></div>'
@@ -811,11 +1041,168 @@
             + '<div class="stat"><div class="value">'+fmtNum(r.kgHa,0)+'</div><div class="label">kg / ha</div></div></div>')
           : '<div class="legend-note">Ingresa el peso para calcular biomasa y kg/ha.</div>')
         + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">'+sobPill+kgHaPill+crecPill+cv+'</div>'
+        + (r.sobIC ? '<div class="ci-note">IC 95% sobrevivencia: '+fmtPct(r.sobIC.lo)+' – '+fmtPct(r.sobIC.hi)+' · estimador: '+r.estimadorUsado+'</div>' : "")
+        + (r.vsCurva!=null ? '<div class="ci-note">Peso vs curva de referencia: '+fmtPct(r.vsCurva)+' ('+fmtNum(r.pesoRef,1)+' g esperados)</div>' : "")
+        + (r.alertas.length ? ('<div class="alert-box'+(r.sobrevivencia>1?' grave':'')+'"><b>Revisar:</b><ul>'
+            + r.alertas.map(a=>'<li>'+escapeHtml(a)+'</li>').join("") + '</ul></div>') : "")
         + photoBlockHtml(r.pob, true)
         + '</div>';
     }).join("");
 
     return '<div class="legend-note" style="margin-bottom:12px;">Verde = cumple tu criterio (sobrevivencia ≥ '+fmtPct(param.minSobrevivencia)+', ≥ '+fmtNum(param.minKgHa,0)+' kg/ha, ≥ '+fmtNum(param.minCrecimiento,1)+' g/sem, CV ≤ '+fmtNum(param.maxCV,0)+'%). Ajustable en Ajustes.</div>' + cards;
+  }
+
+  // ---------- planificación de poblaciones en campo ----------
+  function addDays(iso, n){ const d = new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+
+  function buildPlan(){
+    const cfg = state.planConfig;
+    const tasks = [];
+    state.ciclos.filter(c=>c.estado==="activo").forEach(ciclo=>{
+      const piscina = state.piscinas.find(p=>p.id===ciclo.piscinaId);
+      if (!piscina) return;
+      let ronda = 1;
+      for (let dia = cfg.diaInicial; dia <= cfg.horizonte; dia += cfg.intervalo, ronda++){
+        const idealDate = addDays(ciclo.fechaSiembra, dia);
+        // se considera cumplida si ya hay una población con datos dentro de media ventana
+        const hecha = state.poblaciones.some(p=>p.cicloId===ciclo.id
+          && tirosLlenos(p).length>0
+          && Math.abs(daysBetween(idealDate, p.fecha)) <= Math.floor(cfg.intervalo/2));
+        tasks.push({cicloId:ciclo.id, piscinaId:piscina.id, nombre:piscina.nombre,
+          fechaSiembra:ciclo.fechaSiembra, ronda, diaObjetivo:dia, idealDate, hecha, fechaAsignada:null, desfase:null});
+      }
+    });
+    tasks.sort((a,b)=> a.idealDate<b.idealDate?-1: a.idealDate>b.idealDate?1: (a.nombre<b.nombre?-1:1));
+
+    // asignación: máximo N por día y, en un mismo día, sólo piscinas de la misma fecha de siembra
+    const byDay = {};
+    tasks.forEach(t=>{
+      if (t.hecha) return;
+      let d = t.idealDate;
+      for (let guard=0; guard<400; guard++){
+        const slot = byDay[d] || [];
+        const cabe = slot.length < cfg.porDia;
+        const mismoLote = slot.length===0 || slot[0].fechaSiembra===t.fechaSiembra;
+        if (cabe && mismoLote){ byDay[d] = slot; slot.push(t); t.fechaAsignada = d; break; }
+        d = addDays(d, 1);
+      }
+      t.desfase = t.fechaAsignada ? daysBetween(t.idealDate, t.fechaAsignada) : null;
+    });
+    return {tasks, byDay};
+  }
+
+  function renderSiembrasTab(){
+    const activos = state.ciclos.filter(c=>c.estado==="activo");
+    if (!activos.length) return emptyState("No hay ciclos activos", "Inicia un ciclo en la pestaña Piscinas para poder planificar.");
+
+    const cfg = state.planConfig;
+    const hoy = todayISO();
+
+    // ----- lotes: agrupar piscinas activas por fecha de siembra -----
+    const lotes = {};
+    activos.forEach(c=>{
+      const p = state.piscinas.find(x=>x.id===c.piscinaId);
+      if (!p) return;
+      (lotes[c.fechaSiembra] = lotes[c.fechaSiembra] || []).push({ciclo:c, piscina:p});
+    });
+    const lotesHtml = Object.keys(lotes).sort().reverse().map(fecha=>{
+      const items = lotes[fecha].sort((a,b)=> String(a.piscina.nombre).localeCompare(String(b.piscina.nombre), undefined, {numeric:true}));
+      const dias = daysBetween(fecha, hoy);
+      const totalAnimales = items.reduce((s,x)=>s+Number(x.ciclo.animales||0),0);
+      const totalArea = items.reduce((s,x)=>s+Number(x.ciclo.area||0),0);
+      const chips = items.map(x=>'<span class="pill neutral" style="margin:2px 3px 2px 0;">P '+escapeHtml(x.piscina.nombre)+'</span>').join("");
+
+      // tabla comparativa entre las piscinas del lote
+      const filasCmp = items.map(x=>{
+        const rows = buildPoblacionesConCalculo(x.ciclo.id);
+        const u = rows[rows.length-1];
+        const est = estadoPiscina(rows);
+        return { nombre: x.piscina.nombre, est,
+          sob: u?u.sobrevivencia:null, peso: u?u.peso:null, kgHa: u?u.kgHa:null,
+          crec: u?u.crecimiento:null, cv: u?u.st.cv:null, vsCurva: u?u.vsCurva:null };
+      });
+      const conSob = filasCmp.filter(f=>f.sob!=null);
+      const mejorSob = conSob.length ? Math.max(...conSob.map(f=>f.sob)) : null;
+      const cmpHtml = filasCmp.length>1 ? ('<div style="overflow-x:auto;margin-top:12px;">'
+        + '<table class="cmp-table"><thead><tr><th>Piscina</th><th>Sobrev.</th><th>Peso</th><th>kg/ha</th><th>g/sem</th><th>CV</th><th>vs curva</th></tr></thead><tbody>'
+        + filasCmp.map(f=>'<tr'+(mejorSob!=null && f.sob===mejorSob?' class="destacado"':'')+'>'
+            + '<td><span class="semaforo '+f.est.clase+'"></span>'+escapeHtml(f.nombre)+'</td>'
+            + '<td>'+(f.sob!=null?fmtPct(f.sob):"—")+'</td>'
+            + '<td>'+(f.peso!=null?fmtNum(f.peso,1):"—")+'</td>'
+            + '<td>'+(f.kgHa!=null?fmtNum(f.kgHa,0):"—")+'</td>'
+            + '<td>'+(f.crec!=null?fmtNum(f.crec,2):"—")+'</td>'
+            + '<td>'+(f.cv!=null?fmtNum(f.cv,0)+"%":"—")+'</td>'
+            + '<td>'+(f.vsCurva!=null?fmtPct(f.vsCurva):"—")+'</td>'
+          + '</tr>').join("")
+        + '</tbody></table></div>'
+        + '<div class="legend-note">Fila verde = mejor sobrevivencia del lote. "vs curva" compara el peso real contra la curva de referencia al mismo día de cultivo.</div>') : "";
+
+      return '<div class="card accent">'
+        + '<div class="card-header"><div><h3>Lote '+fmtDate(fecha)+'</h3><div class="muted">'+items.length+' piscina(s) · día '+dias+' de cultivo</div></div></div>'
+        + waterBar(dias, null)
+        + '<div class="stat-grid" style="margin-top:12px;">'
+          + '<div class="stat"><div class="value">'+fmtNum(totalArea/10000,2)+' ha</div><div class="label">Área del lote</div></div>'
+          + '<div class="stat"><div class="value">'+fmtNum(totalAnimales,0)+'</div><div class="label">Animales sembrados</div></div>'
+        + '</div>'
+        + '<div style="margin-top:6px;">'+chips+'</div>'
+        + cmpHtml
+        + '</div>';
+    }).join("");
+
+    // ----- plan de campo -----
+    const plan = buildPlan();
+    const pendientes = plan.tasks.filter(t=>!t.hecha);
+    const hechas = plan.tasks.filter(t=>t.hecha).length;
+    const dias = Object.keys(plan.byDay).sort();
+    const proximos = dias.filter(d=> d >= hoy).slice(0, 14);
+    const atrasados = dias.filter(d=> d < hoy);
+
+    const agendaHtml = proximos.map(d=>{
+      const items = plan.byDay[d];
+      const esHoy = d === hoy;
+      const filas = items.map(t=>'<div class="list-row">'
+          + '<div><div class="rowmain">Piscina '+escapeHtml(t.nombre)+'</div>'
+          + '<div class="rowsub">Ronda '+t.ronda+' · día '+t.diaObjetivo+' de cultivo'+(t.desfase>0?' · +'+t.desfase+'d de desfase':'')+'</div></div>'
+          + '<button class="btn btn-outline btn-sm" data-action="plan-ir" data-piscina="'+t.piscinaId+'" data-fecha="'+d+'">Registrar</button>'
+        + '</div>').join("");
+      return '<div class="card'+(esHoy?' accent':'')+'">'
+        + '<div class="card-header"><div><h3 style="font-size:15px;">'+fmtDate(d)+(esHoy?' · hoy':'')+'</h3>'
+        + '<div class="muted">Lote '+fmtDate(items[0].fechaSiembra)+' · '+items.length+' de '+cfg.porDia+' cupos</div></div></div>'
+        + filas + '</div>';
+    }).join("");
+
+    const atrasadosHtml = atrasados.length ? ('<div class="card" style="border-left:4px solid var(--amber);">'
+      + '<div class="card-header"><div><h3 style="font-size:15px;">Atrasadas</h3><div class="muted">Fechas ya pasadas sin registrar</div></div>'
+      + '<span class="pill warn">'+atrasados.reduce((s,d)=>s+plan.byDay[d].length,0)+'</span></div>'
+      + atrasados.map(d=>plan.byDay[d].map(t=>'<div class="list-row">'
+          + '<div><div class="rowmain">Piscina '+escapeHtml(t.nombre)+'</div><div class="rowsub">Era el '+fmtDate(d)+' · ronda '+t.ronda+'</div></div>'
+          + '<button class="btn btn-outline btn-sm" data-action="plan-ir" data-piscina="'+t.piscinaId+'" data-fecha="'+hoy+'">Registrar</button>'
+        + '</div>').join("")).join("")
+      + '</div>') : "";
+
+    const configHtml = '<div class="card">'
+      + '<div class="card-header"><div><h3 style="font-size:15px;">Reglas del plan</h3><div class="muted">Ajusta y el calendario se recalcula</div></div></div>'
+      + '<div class="row"><div class="field"><label>Primera población (día)</label><input type="number" min="1" id="plan-dia-inicial" value="'+cfg.diaInicial+'"></div>'
+      + '<div class="field"><label>Cada cuántos días</label><input type="number" min="1" id="plan-intervalo" value="'+cfg.intervalo+'"></div></div>'
+      + '<div class="row"><div class="field"><label>Poblaciones por día</label><input type="number" min="1" id="plan-por-dia" value="'+cfg.porDia+'"></div>'
+      + '<div class="field"><label>Horizonte del ciclo (días)</label><input type="number" min="10" id="plan-horizonte" value="'+cfg.horizonte+'"></div></div>'
+      + '<button class="btn btn-secondary" data-action="save-plan-config">Guardar reglas</button>'
+      + '<div class="legend-note" style="margin-top:8px;">Cada día de campo agrupa sólo piscinas del mismo lote de siembra. Si un lote tiene más piscinas que los cupos diarios, se reparte en días seguidos.</div>'
+      + '</div>';
+
+    return '<h2 class="section-title">Plan de campo</h2>'
+      + '<div class="card accent">'
+        + '<div class="stat-grid">'
+          + '<div class="stat"><div class="value">'+Object.keys(lotes).length+'</div><div class="label">Lotes activos</div></div>'
+          + '<div class="stat"><div class="value">'+activos.length+'</div><div class="label">Piscinas activas</div></div>'
+          + '<div class="stat"><div class="value">'+hechas+'</div><div class="label">Poblaciones hechas</div></div>'
+          + '<div class="stat"><div class="value">'+pendientes.length+'</div><div class="label">Pendientes</div></div>'
+        + '</div></div>'
+      + atrasadosHtml
+      + (agendaHtml ? ('<h2 class="section-title" style="margin:16px 2px 10px;">Próximos días</h2>' + agendaHtml)
+          : '<div class="legend-note" style="margin:10px 2px;">No hay poblaciones pendientes en el horizonte configurado.</div>')
+      + '<h2 class="section-title" style="margin:16px 2px 10px;">Lotes de siembra</h2>' + lotesHtml
+      + configHtml;
   }
 
   function renderHistorialTab(){
@@ -915,6 +1302,18 @@
       + '<div class="field"><label>Crecimiento semanal mínimo (g)</label><input type="number" step="0.1" id="set-crec" value="'+p.minCrecimiento+'"></div>'
       + '<div class="field"><label>kg/ha mínimo</label><input type="number" step="10" id="set-kgha" value="'+p.minKgHa+'"></div>'
       + '<div class="field"><label>CV máximo aceptable entre tiros (%)</label><input type="number" step="1" id="set-cv" value="'+p.maxCV+'"></div>'
+      + '<div class="divider"></div>'
+      + '<div class="legend-note" style="margin-bottom:8px;">Método de cálculo:</div>'
+      + '<div class="field"><label>Estimador de la captura</label><select id="set-estimador">'
+        + '<option value="auto"'+(p.estimador==="auto"?" selected":"")+'>Automático (mediana si el CV supera el máximo)</option>'
+        + '<option value="media"'+(p.estimador==="media"?" selected":"")+'>Siempre la media</option>'
+        + '<option value="mediana"'+(p.estimador==="mediana"?" selected":"")+'>Siempre la mediana (robusto)</option>'
+      + '</select></div>'
+      + '<div class="field"><label>Precisión objetivo (± %)</label><input type="number" step="1" min="1" id="set-precision" value="'+p.precisionObjetivo+'"></div>'
+      + '<div class="legend-note" style="margin-bottom:8px;">Curva de crecimiento de referencia: W(t) = a · exp(−b · exp(−c·t))</div>'
+      + '<div class="row"><div class="field"><label>a</label><input type="number" step="0.01" id="set-gz-a" value="'+p.gompertz.a+'"></div>'
+      + '<div class="field"><label>b</label><input type="number" step="0.01" id="set-gz-b" value="'+p.gompertz.b+'"></div>'
+      + '<div class="field"><label>c</label><input type="number" step="0.0001" id="set-gz-c" value="'+p.gompertz.c+'"></div></div>'
       + '<div class="divider"></div>'
       + '<div class="legend-note" style="margin-bottom:8px;">Copia de seguridad en Google Sheets (opcional):</div>'
       + '<div class="field"><label>URL de tu Apps Script (Web App)</label><input type="url" id="set-backup-url" value="'+(state.backupConfig.url?escapeHtml(state.backupConfig.url):"")+'" placeholder="https://script.google.com/macros/s/.../exec"></div>'
@@ -1079,6 +1478,38 @@
     render();
   }
 
+  async function handleToggleExcluir(idx){
+    const ciclo = getCicloActivo(state.session.piscinaId);
+    if (!ciclo) return;
+    const pob = ensurePoblacion(ciclo.id, state.session.fecha);
+    if (!pob.tiros[idx]) return;
+    pob.tiros[idx].excluido = !pob.tiros[idx].excluido;
+    await storageSet("poblaciones", state.poblaciones);
+    render();
+  }
+
+  async function handleExcluirAtipicos(){
+    const ciclo = getCicloActivo(state.session.piscinaId);
+    if (!ciclo) return;
+    const pob = ensurePoblacion(ciclo.id, state.session.fecha);
+    const idx = indicesAtipicos(pob);
+    if (!idx.length){ showToast("No hay tiros atípicos."); return; }
+    idx.forEach(i=>{ pob.tiros[i].excluido = true; });
+    await storageSet("poblaciones", state.poblaciones);
+    showToast(idx.length+" tiro(s) excluido(s) del cálculo.");
+    render();
+  }
+
+  async function handleRestaurarExcluidos(){
+    const ciclo = getCicloActivo(state.session.piscinaId);
+    if (!ciclo) return;
+    const pob = ensurePoblacion(ciclo.id, state.session.fecha);
+    pob.tiros.forEach(t=>{ t.excluido = false; });
+    await storageSet("poblaciones", state.poblaciones);
+    showToast("Tiros restaurados.");
+    render();
+  }
+
   async function handleGridResize(delta){
     const ciclo = getCicloActivo(state.session.piscinaId);
     if (!ciclo) return;
@@ -1205,6 +1636,29 @@
     render();
   }
 
+  async function handleSavePlanConfig(){
+    const di = parseInt(document.getElementById("plan-dia-inicial").value, 10);
+    const iv = parseInt(document.getElementById("plan-intervalo").value, 10);
+    const pd = parseInt(document.getElementById("plan-por-dia").value, 10);
+    const hz = parseInt(document.getElementById("plan-horizonte").value, 10);
+    state.planConfig = {
+      diaInicial: (di>0?di:state.planConfig.diaInicial),
+      intervalo: (iv>0?iv:state.planConfig.intervalo),
+      porDia: (pd>0?pd:state.planConfig.porDia),
+      horizonte: (hz>0?hz:state.planConfig.horizonte),
+    };
+    await storageSet("planConfig", state.planConfig);
+    showToast("Reglas del plan guardadas."); render();
+  }
+
+  function handlePlanIr(piscinaId, fecha){
+    state.session.piscinaId = piscinaId;
+    state.session.fecha = fecha;
+    state.photoStatus = null;
+    state.currentTab = "muestreo";
+    render();
+  }
+
   async function handleSavePesoSesion(){
     const ciclo = getCicloActivo(state.session.piscinaId);
     if (!ciclo) return;
@@ -1261,6 +1715,13 @@
       minCrecimiento: parseFloat(document.getElementById("set-crec").value) || 0,
       minKgHa: parseFloat(document.getElementById("set-kgha").value) || 0,
       maxCV: parseFloat(document.getElementById("set-cv").value) || state.parametros.maxCV,
+      estimador: document.getElementById("set-estimador").value || state.parametros.estimador,
+      precisionObjetivo: parseFloat(document.getElementById("set-precision").value) || state.parametros.precisionObjetivo,
+      gompertz: {
+        a: parseFloat(document.getElementById("set-gz-a").value) || state.parametros.gompertz.a,
+        b: parseFloat(document.getElementById("set-gz-b").value) || state.parametros.gompertz.b,
+        c: parseFloat(document.getElementById("set-gz-c").value) || state.parametros.gompertz.c,
+      },
     };
     const urlEl = document.getElementById("set-backup-url");
     if (urlEl) state.backupConfig.url = urlEl.value.trim() || null;
@@ -1359,6 +1820,11 @@
     else if (action==="grid-resize"){ handleGridResize(Number(t.dataset.delta)); }
     else if (action==="bulk-fill"){ handleBulkFill(); }
     else if (action==="bulk-fill-prof"){ handleBulkFillProf(); }
+    else if (action==="save-plan-config"){ handleSavePlanConfig(); }
+    else if (action==="toggle-excluir"){ handleToggleExcluir(Number(t.dataset.idx)); }
+    else if (action==="excluir-atipicos"){ handleExcluirAtipicos(); }
+    else if (action==="restaurar-excluidos"){ handleRestaurarExcluidos(); }
+    else if (action==="plan-ir"){ handlePlanIr(t.dataset.piscina, t.dataset.fecha); }
     else if (action==="edit-eficiencia"){ openEficienciaModal(t.dataset.pob); }
     else if (action==="save-eficiencia-modal"){ handleSaveEficienciaModal(t.dataset.pob); }
     else if (action==="remove-photo"){ handleRemovePhoto(); }

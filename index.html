@@ -942,7 +942,9 @@
     if (state.editingPiscinaId){
       const p = state.piscinas.find(x=>x.id===state.editingPiscinaId);
       Object.assign(p, {nombre, area});
-      await storageSet("piscinas", state.piscinas);
+      const cicloActivo = getCicloActivo(p.id);
+      if (cicloActivo) cicloActivo.area = area;
+      await Promise.all([storageSet("piscinas", state.piscinas), storageSet("ciclos", state.ciclos)]);
     } else {
       const fecha = document.getElementById("pf-fecha").value;
       const animales = parseFloat(document.getElementById("pf-animales").value);

@@ -516,7 +516,13 @@
   function emptyCell(){ return {captura:null, profundidad:null}; }
   function ensurePoblacion(cicloId, fecha){
     let pob = getPoblacion(cicloId, fecha);
-    if (!pob){ pob = {id:uid(), cicloId, fecha, peso:null, tieneFoto:false, tiros: Array.from({length:16}, emptyCell)}; state.poblaciones.push(pob); }
+    if (!pob){
+      const ciclo = state.ciclos.find(c=>c.id===cicloId);
+      const piscina = ciclo ? state.piscinas.find(p=>p.id===ciclo.piscinaId) : null;
+      const efDefault = (piscina && piscina.eficiencia!=null && piscina.eficiencia!=="") ? Number(piscina.eficiencia) : state.parametros.eficiencia;
+      pob = {id:uid(), cicloId, fecha, peso:null, eficiencia:efDefault, tieneFoto:false, tiros: Array.from({length:16}, emptyCell)};
+      state.poblaciones.push(pob);
+    }
     return pob;
   }
   function tirosLlenos(pob){ return pob.tiros.filter(t=>t.captura!=null && t.captura!=="" && !isNaN(Number(t.captura))); }
@@ -536,8 +542,8 @@
   function buildPoblacionesConCalculo(cicloId){
     const ciclo = state.ciclos.find(c=>c.id===cicloId);
     if (!ciclo) return [];
+    const piscina = state.piscinas.find(p=>p.id===ciclo.piscinaId);
     const areaAtarraya = Math.PI * Math.pow(state.parametros.radioAtarraya, 2);
-    const areaCorregida = areaAtarraya * state.parametros.eficiencia;
     const animalesM2 = ciclo.area ? ciclo.animales/ciclo.area : 0;
     const pobs = state.poblaciones
       .filter(x=>x.cicloId===cicloId)
@@ -549,6 +555,10 @@
       const st = stats(capturas);
       const profs = llenos.filter(t=>t.profundidad!=null && t.profundidad!=="").map(t=>Number(t.profundidad));
       const profProm = profs.length ? profs.reduce((a,b)=>a+b,0)/profs.length : null;
+      const eficiencia = (pob.eficiencia!=null && pob.eficiencia!=="") ? Number(pob.eficiencia)
+        : (piscina && piscina.eficiencia!=null && piscina.eficiencia!=="") ? Number(piscina.eficiencia)
+        : state.parametros.eficiencia;
+      const areaCorregida = areaAtarraya * eficiencia;
       const camXm2 = (areaCorregida && st.mean!=null) ? st.mean/areaCorregida : null;
       const sobrevivencia = (animalesM2 && camXm2!=null) ? camXm2/animalesM2 : null;
       const diasCultivo = daysBetween(ciclo.fechaSiembra, pob.fecha);
@@ -557,7 +567,7 @@
       const kgHa = biomasa!=null ? biomasa/(ciclo.area/10000) : null;
       const pares = paresCapturaProfundidad(pob);
       const corr = pearsonCorr(pares.map(t=>Number(t.captura)), pares.map(t=>Number(t.profundidad)));
-      return { pob, st, profProm, camXm2, sobrevivencia, diasCultivo, peso, biomasa, kgHa, crecimiento:null, corr, corrAcumulada:null };
+      return { pob, st, profProm, camXm2, sobrevivencia, diasCultivo, peso, biomasa, kgHa, crecimiento:null, corr, corrAcumulada:null, eficiencia };
     });
     for (let i=1;i<rows.length;i++){
       const prev=rows[i-1], cur=rows[i];
@@ -743,11 +753,16 @@
             + '<button class="icon-btn" style="width:30px;height:30px;background:var(--surface-2);" data-action="grid-resize" data-delta="4">+</button>'
           + '</div>'
         + '</div>'
+        + '</div>'
+        + '<div class="field"><label>Pegar capturas de una vez (separadas por espacio, coma o salto de línea)</label>'
+          + '<textarea id="bulk-input" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--surface-2);font-family:var(--mono);font-size:13px;" placeholder="ej. 120 168 103 100 60 100 105 80"></textarea></div>'
+        + '<button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:12px;" data-action="bulk-fill">⚡ Rellenar tabla con estos valores</button>'
         + '<div class="pond-table"><div class="grid-cells">'+cells+'</div></div>'
         + statsPanel
         + '<div class="divider"></div>'
-        + '<div class="field"><label>Peso muestreado (g)</label><input type="number" step="0.1" min="0" id="input-peso" value="'+(pob.peso!=null?pob.peso:"")+'" placeholder="ej. 5.8"></div>'
-        + '<button class="btn btn-secondary" data-action="save-peso">Guardar peso de la población</button>'
+        + '<div class="row"><div class="field"><label>Peso muestreado (g)</label><input type="number" step="0.1" min="0" id="input-peso" value="'+(pob.peso!=null?pob.peso:"")+'" placeholder="ej. 5.8"></div>'
+        + '<div class="field"><label>Eficiencia atarraya</label><input type="number" step="0.01" min="0" max="1" id="input-eficiencia" value="'+(pob.eficiencia!=null?pob.eficiencia:"")+'"></div></div>'
+        + '<button class="btn btn-secondary" data-action="save-peso">Guardar peso y eficiencia</button>'
         + '<div class="divider"></div>'
         + photoBlockHtml(pob, false)
         + (state.photoStatus ? ('<div class="legend-note" style="margin-top:8px;'+(state.photoStatus.ok?'':'color:var(--red);')+'">'+(state.photoStatus.ok?"✓ ":"⚠ ")+state.photoStatus.msg+'</div>') : "")
@@ -782,9 +797,10 @@
           + '<div class="stat"><div class="value">'+fmtModa(r.st.moda)+'</div><div class="label">Moda</div></div>'
           + '<div class="stat"><div class="value">'+fmtNum(r.camXm2,2)+'</div><div class="label">Camarón / m²</div></div>'
         + '</div>'
-        + '<div class="stat-grid">'
+        + '<div class="stat-grid cols-3">'
           + '<div class="stat"><div class="value">'+(r.profProm!=null?fmtNum(r.profProm,1)+" cm":"—")+'</div><div class="label">Profundidad prom.</div></div>'
           + '<div class="stat"><div class="value">'+(r.corr!=null?fmtNum(r.corr,2):"—")+'</div><div class="label">Correlación captura-prof.</div></div>'
+          + '<div class="stat"><div class="value">'+fmtNum(r.eficiencia,2)+'</div><div class="label">Eficiencia usada</div></div>'
         + '</div>'
         + '<div class="field" style="margin-top:6px;"><label>Peso muestreado (g)</label>'
           + '<input type="number" step="0.1" min="0" data-field="peso" data-ciclo="'+r.ciclo.id+'" data-fecha="'+r.pob.fecha+'" value="'+(r.peso!=null?r.peso:"")+'" placeholder="ej. 5.8"></div>'
@@ -854,9 +870,10 @@
           + '<div class="stat"><div class="value">'+fmtPct(r.sobrevivencia)+'</div><div class="label">Sobrevivencia</div></div>'
           + '<div class="stat"><div class="value">'+(r.biomasa!=null?fmtNum(r.biomasa,1)+" kg":"—")+'</div><div class="label">Biomasa</div></div>'
         + '</div>'
-        + '<div class="stat-grid">'
+        + '<div class="stat-grid cols-3">'
           + '<div class="stat"><div class="value">'+(r.profProm!=null?fmtNum(r.profProm,1)+" cm":"—")+'</div><div class="label">Profundidad prom.</div></div>'
           + '<div class="stat"><div class="value">'+(r.corr!=null?fmtNum(r.corr,2):"—")+'</div><div class="label">Correlación captura-prof.</div></div>'
+          + '<div class="stat"><div class="value">'+fmtNum(r.eficiencia,2)+'</div><div class="label">Eficiencia usada</div></div>'
         + '</div>'
         + photoBlockHtml(r.pob, true)
         + '</div>').join("");
@@ -886,7 +903,8 @@
     openModal('<h3>Ajustes</h3>'
       + '<div class="legend-note" style="margin-bottom:8px;">Atarraya: se calcula el área con la fórmula del círculo (Área = π × radio²). Si cambias de atarraya, solo actualiza el radio.</div>'
       + '<div class="row"><div class="field"><label>Radio de la atarraya (m)</label><input type="number" step="0.01" id="set-radio" value="'+p.radioAtarraya+'"></div>'
-      + '<div class="field"><label>Eficiencia</label><input type="number" step="0.01" id="set-efic" value="'+p.eficiencia+'"></div></div>'
+      + '<div class="field"><label>Eficiencia por defecto</label><input type="number" step="0.01" id="set-efic" value="'+p.eficiencia+'"></div></div>'
+      + '<div class="legend-note" style="margin-top:-6px;">Cada piscina y cada población pueden tener su propia eficiencia — esta es solo el valor inicial cuando no se especifica otra.</div>'
       + '<div class="legend-note" id="area-calc-preview" style="margin-top:-6px;margin-bottom:10px;">Área calculada: <b>'+fmtNum(areaCalc,2)+' m²</b></div>'
       + '<div class="divider"></div>'
       + '<div class="legend-note" style="margin-bottom:8px;">Umbrales para marcar en verde en Resumen / Historial:</div>'
@@ -915,6 +933,7 @@
     openModal('<h3>'+(p?"Editar piscina":"Nueva piscina")+'</h3>'
       + '<div class="field"><label>Piscina (n°)</label><input type="text" id="pf-nombre" value="'+(p?escapeHtml(p.nombre):"")+'" placeholder="ej. 10"></div>'
       + '<div class="field"><label>Área (m²)</label><input type="number" id="pf-area" value="'+(p?p.area:"")+'" placeholder="ej. 44400"></div>'
+      + '<div class="field"><label>Eficiencia de la atarraya en esta piscina (opcional)</label><input type="number" step="0.01" id="pf-eficiencia" value="'+(p&&p.eficiencia!=null?p.eficiencia:"")+'" placeholder="por defecto: '+state.parametros.eficiencia+'"></div>'
       + (p ? "" : '<div class="divider"></div><div class="legend-note" style="margin-bottom:8px;">Datos del primer ciclo:</div>'
         + '<div class="field"><label>Fecha de siembra</label><input type="date" id="pf-fecha" value="'+todayISO()+'"></div>'
         + '<div class="field"><label>Animales sembrados</label><input type="number" id="pf-animales" placeholder="ej. 803142"></div>')
@@ -941,10 +960,12 @@
   async function handleSavePiscina(){
     const nombre = document.getElementById("pf-nombre").value.trim();
     const area = parseFloat(document.getElementById("pf-area").value);
+    const efVal = document.getElementById("pf-eficiencia").value;
+    const eficiencia = efVal===""? null : parseFloat(efVal);
     if (!nombre || !area){ showToast("Completa piscina y área."); return; }
     if (state.editingPiscinaId){
       const p = state.piscinas.find(x=>x.id===state.editingPiscinaId);
-      Object.assign(p, {nombre, area});
+      Object.assign(p, {nombre, area, eficiencia});
       const cicloActivo = getCicloActivo(p.id);
       if (cicloActivo) cicloActivo.area = area;
       await Promise.all([storageSet("piscinas", state.piscinas), storageSet("ciclos", state.ciclos)]);
@@ -953,7 +974,7 @@
       const animales = parseFloat(document.getElementById("pf-animales").value);
       if (!fecha || !animales){ showToast("Completa la fecha de siembra y los animales sembrados."); return; }
       const id = uid();
-      state.piscinas.push({id, nombre, area});
+      state.piscinas.push({id, nombre, area, eficiencia});
       state.ciclos.push({id:uid(), piscinaId:id, numero:1, fechaSiembra:fecha, animales, area, estado:"activo", fechaCierre:null});
       await Promise.all([storageSet("piscinas", state.piscinas), storageSet("ciclos", state.ciclos)]);
     }
@@ -1006,6 +1027,20 @@
     if (field==="captura") pob.tiros[idx].captura = num;
     else pob.tiros[idx].profundidad = num;
     await storageSet("poblaciones", state.poblaciones);
+    render();
+  }
+
+  async function handleBulkFill(){
+    const raw = document.getElementById("bulk-input").value || "";
+    const nums = (raw.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    if (!nums.length){ showToast("No encontré números en el texto pegado."); return; }
+    const ciclo = getCicloActivo(state.session.piscinaId);
+    if (!ciclo) return;
+    const pob = ensurePoblacion(ciclo.id, state.session.fecha);
+    if (pob.tiros.length < nums.length) resizeGrid(pob, nums.length - pob.tiros.length);
+    nums.forEach((n,i)=>{ if (!pob.tiros[i]) pob.tiros[i] = emptyCell(); pob.tiros[i].captura = n; });
+    await storageSet("poblaciones", state.poblaciones);
+    showToast(nums.length+" capturas cargadas.");
     render();
   }
 
@@ -1140,9 +1175,11 @@
     if (!ciclo) return;
     const pob = ensurePoblacion(ciclo.id, state.session.fecha);
     const val = document.getElementById("input-peso").value;
+    const efVal = document.getElementById("input-eficiencia").value;
     pob.peso = val===""?null:Number(val);
+    pob.eficiencia = efVal===""?state.parametros.eficiencia:Number(efVal);
     await storageSet("poblaciones", state.poblaciones);
-    showToast("Peso guardado."); render();
+    showToast("Peso y eficiencia guardados."); render();
   }
 
   async function handlePesoChange(el){
@@ -1285,6 +1322,7 @@
     else if (action==="test-storage"){ handleTestStorage(); }
     else if (action==="save-peso"){ handleSavePesoSesion(); }
     else if (action==="grid-resize"){ handleGridResize(Number(t.dataset.delta)); }
+    else if (action==="bulk-fill"){ handleBulkFill(); }
     else if (action==="remove-photo"){ handleRemovePhoto(); }
     else if (action==="retry-load"){ location.reload(); }
     else if (action==="fb-connect"){ handleFirebaseConnect(); }

@@ -267,8 +267,11 @@
     fotos: {},
     diagStatus: null,
     backupConfig: { url: null, lastBackup: null },
-    planConfig: { diaInicial: 8, intervalo: 35, porDia: 3, horizonte: 120 },
+    planConfig: { diaInicial: 8, intervalo: 10, porDia: 3, horizonte: DIAS_CICLO },
   };
+
+  const LANCES_POR_POBLACION = 16;  // número fijo de lances de atarraya por población
+  const DIAS_CICLO = 40;            // duración máxima del ciclo de una piscina
 
   function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2)); }
   function todayISO(){ return new Date().toISOString().slice(0,10); }
@@ -614,8 +617,19 @@
       const ciclo = state.ciclos.find(c=>c.id===cicloId);
       const piscina = ciclo ? state.piscinas.find(p=>p.id===ciclo.piscinaId) : null;
       const efDefault = (piscina && piscina.eficiencia!=null && piscina.eficiencia!=="") ? Number(piscina.eficiencia) : state.parametros.eficiencia;
-      pob = {id:uid(), cicloId, fecha, peso:null, eficiencia:efDefault, tieneFoto:false, tiros: Array.from({length:16}, emptyCell)};
+      pob = {id:uid(), cicloId, fecha, peso:null, eficiencia:efDefault, tieneFoto:false, tiros: Array.from({length:LANCES_POR_POBLACION}, emptyCell)};
       state.poblaciones.push(pob);
+    }
+    normalizarGrid(pob);
+    return pob;
+  }
+  // asegura los 16 lances fijos; sólo recorta celdas sobrantes que estén vacías
+  function normalizarGrid(pob){
+    while (pob.tiros.length < LANCES_POR_POBLACION) pob.tiros.push(emptyCell());
+    while (pob.tiros.length > LANCES_POR_POBLACION){
+      const ultimo = pob.tiros[pob.tiros.length-1];
+      if (ultimo && ultimo.captura!=null && ultimo.captura!=="") break;
+      pob.tiros.pop();
     }
     return pob;
   }
@@ -707,8 +721,8 @@
           r.alertas.push("El peso promedio bajó respecto a la población anterior: revisa la biometría.");
         }
       }
-      if (r.st.n>0 && r.st.n < 6){
-        r.alertas.push("Sólo "+r.st.n+" tiros: la estimación es poco confiable.");
+      if (r.st.n>0 && r.st.n < LANCES_POR_POBLACION){
+        r.alertas.push("Población incompleta: "+r.st.n+" de "+LANCES_POR_POBLACION+" lances"+(tirosExcluidos(r.pob).length?" ("+tirosExcluidos(r.pob).length+" excluido(s))":"")+".");
       }
       if (r.nReq!=null && r.st.n>0 && r.nReq > r.st.n){
         r.alertas.push("Para ±"+fmtNum(state.parametros.precisionObjetivo,0)+"% de precisión harían falta ~"+r.nReq+" tiros (tienes "+r.st.n+").");
@@ -755,7 +769,7 @@
   }
 
   function waterBar(diasCultivo, poblacionDias){
-    const cycle = 120;
+    const cycle = DIAS_CICLO;
     const pct = Math.max(3, Math.min(100, (diasCultivo/cycle)*100));
     const ticks = (poblacionDias||[]).map(d=>{
       const tpct = Math.max(0, Math.min(100, (d/cycle)*100));
@@ -975,11 +989,7 @@
       + '<div class="card">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
           + '<h3 style="font-size:14px;margin:0;">Tabla de la piscina</h3>'
-          + '<div style="display:flex;align-items:center;gap:8px;">'
-            + '<span class="legend-note">'+pob.tiros.length+' celdas</span>'
-            + '<button class="icon-btn" style="width:30px;height:30px;background:var(--surface-2);" data-action="grid-resize" data-delta="-4">−</button>'
-            + '<button class="icon-btn" style="width:30px;height:30px;background:var(--surface-2);" data-action="grid-resize" data-delta="4">+</button>'
-          + '</div>'
+          + '<span class="legend-note">'+tirosLlenos(pob).length+' de '+LANCES_POR_POBLACION+' lances</span>'
         + '</div>'
         + '</div>'
         + '<div class="field"><label>Pegar capturas de una vez (separadas por espacio, coma o salto de línea)</label>'
@@ -1185,7 +1195,7 @@
       + '<div class="row"><div class="field"><label>Primera población (día)</label><input type="number" min="1" id="plan-dia-inicial" value="'+cfg.diaInicial+'"></div>'
       + '<div class="field"><label>Cada cuántos días</label><input type="number" min="1" id="plan-intervalo" value="'+cfg.intervalo+'"></div></div>'
       + '<div class="row"><div class="field"><label>Poblaciones por día</label><input type="number" min="1" id="plan-por-dia" value="'+cfg.porDia+'"></div>'
-      + '<div class="field"><label>Horizonte del ciclo (días)</label><input type="number" min="10" id="plan-horizonte" value="'+cfg.horizonte+'"></div></div>'
+      + '<div class="field"><label>Duración del ciclo (días)</label><input type="number" min="10" id="plan-horizonte" value="'+cfg.horizonte+'"></div></div>'
       + '<button class="btn btn-secondary" data-action="save-plan-config">Guardar reglas</button>'
       + '<div class="legend-note" style="margin-top:8px;">Cada día de campo agrupa sólo piscinas del mismo lote de siembra. Si un lote tiene más piscinas que los cupos diarios, se reparte en días seguidos.</div>'
       + '</div>';
@@ -1457,10 +1467,10 @@
     const ciclo = getCicloActivo(state.session.piscinaId);
     if (!ciclo) return;
     const pob = ensurePoblacion(ciclo.id, state.session.fecha);
-    if (pob.tiros.length < nums.length) resizeGrid(pob, nums.length - pob.tiros.length);
-    nums.forEach((n,i)=>{ if (!pob.tiros[i]) pob.tiros[i] = emptyCell(); pob.tiros[i].captura = n; });
+    const usar = nums.slice(0, LANCES_POR_POBLACION);
+    usar.forEach((n,i)=>{ pob.tiros[i].captura = n; });
     await storageSet("poblaciones", state.poblaciones);
-    showToast(nums.length+" capturas cargadas.");
+    showToast(usar.length+" capturas cargadas."+(nums.length>LANCES_POR_POBLACION?" Se ignoraron "+(nums.length-LANCES_POR_POBLACION)+" valores sobrantes.":""));
     render();
   }
 
@@ -1471,10 +1481,10 @@
     const ciclo = getCicloActivo(state.session.piscinaId);
     if (!ciclo) return;
     const pob = ensurePoblacion(ciclo.id, state.session.fecha);
-    if (pob.tiros.length < nums.length) resizeGrid(pob, nums.length - pob.tiros.length);
-    nums.forEach((n,i)=>{ if (!pob.tiros[i]) pob.tiros[i] = emptyCell(); pob.tiros[i].profundidad = n; });
+    const usar = nums.slice(0, LANCES_POR_POBLACION);
+    usar.forEach((n,i)=>{ pob.tiros[i].profundidad = n; });
     await storageSet("poblaciones", state.poblaciones);
-    showToast(nums.length+" profundidades cargadas.");
+    showToast(usar.length+" profundidades cargadas."+(nums.length>LANCES_POR_POBLACION?" Se ignoraron "+(nums.length-LANCES_POR_POBLACION)+" valores sobrantes.":""));
     render();
   }
 
@@ -1817,7 +1827,6 @@
     else if (action==="restore-cloud"){ handleRestoreCloud(); }
     else if (action==="test-storage"){ handleTestStorage(); }
     else if (action==="save-peso"){ handleSavePesoSesion(); }
-    else if (action==="grid-resize"){ handleGridResize(Number(t.dataset.delta)); }
     else if (action==="bulk-fill"){ handleBulkFill(); }
     else if (action==="bulk-fill-prof"){ handleBulkFillProf(); }
     else if (action==="save-plan-config"){ handleSavePlanConfig(); }

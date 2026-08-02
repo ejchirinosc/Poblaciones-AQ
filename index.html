@@ -800,7 +800,7 @@
         + '<div class="stat-grid cols-3">'
           + '<div class="stat"><div class="value">'+(r.profProm!=null?fmtNum(r.profProm,1)+" cm":"—")+'</div><div class="label">Profundidad prom.</div></div>'
           + '<div class="stat"><div class="value">'+(r.corr!=null?fmtNum(r.corr,2):"—")+'</div><div class="label">Correlación captura-prof.</div></div>'
-          + '<div class="stat"><div class="value">'+fmtNum(r.eficiencia,2)+'</div><div class="label">Eficiencia usada</div></div>'
+          + '<button class="stat" style="border:none;cursor:pointer;text-align:left;width:100%;font-family:inherit;" data-action="edit-eficiencia" data-pob="'+r.pob.id+'"><div class="value">'+fmtNum(r.eficiencia,2)+' ✏️</div><div class="label">Eficiencia (editar)</div></button>'
         + '</div>'
         + '<div class="field" style="margin-top:6px;"><label>Peso muestreado (g)</label>'
           + '<input type="number" step="0.1" min="0" data-field="peso" data-ciclo="'+r.ciclo.id+'" data-fecha="'+r.pob.fecha+'" value="'+(r.peso!=null?r.peso:"")+'" placeholder="ej. 5.8"></div>'
@@ -873,7 +873,7 @@
         + '<div class="stat-grid cols-3">'
           + '<div class="stat"><div class="value">'+(r.profProm!=null?fmtNum(r.profProm,1)+" cm":"—")+'</div><div class="label">Profundidad prom.</div></div>'
           + '<div class="stat"><div class="value">'+(r.corr!=null?fmtNum(r.corr,2):"—")+'</div><div class="label">Correlación captura-prof.</div></div>'
-          + '<div class="stat"><div class="value">'+fmtNum(r.eficiencia,2)+'</div><div class="label">Eficiencia usada</div></div>'
+          + '<button class="stat" style="border:none;cursor:pointer;text-align:left;width:100%;font-family:inherit;" data-action="edit-eficiencia" data-pob="'+r.pob.id+'"><div class="value">'+fmtNum(r.eficiencia,2)+' ✏️</div><div class="label">Eficiencia (editar)</div></button>'
         + '</div>'
         + photoBlockHtml(r.pob, true)
         + '</div>').join("");
@@ -940,6 +940,15 @@
       + '<div class="modal-actions"><button class="btn btn-secondary" data-action="close-modal">Cancelar</button><button class="btn btn-primary" data-action="save-piscina">Guardar</button></div>');
   }
 
+  function openEficienciaModal(pobId){
+    const pob = state.poblaciones.find(x=>x.id===pobId);
+    if (!pob) return;
+    openModal('<h3>Eficiencia de esta población</h3>'
+      + '<p class="legend-note" style="margin-bottom:10px;">'+fmtDate(pob.fecha)+'. Se usa solo para el cálculo de esta población en particular.</p>'
+      + '<div class="field"><label>Eficiencia (0 a 1)</label><input type="number" step="0.01" min="0" max="1" id="ef-modal-input" value="'+(pob.eficiencia!=null?pob.eficiencia:"")+'"></div>'
+      + '<div class="modal-actions"><button class="btn btn-secondary" data-action="close-modal">Cancelar</button><button class="btn btn-primary" data-action="save-eficiencia-modal" data-pob="'+pobId+'">Guardar</button></div>');
+  }
+
   function openCicloModal(piscinaId){
     state.editingCicloPiscinaId = piscinaId;
     const p = state.piscinas.find(x=>x.id===piscinaId);
@@ -989,6 +998,15 @@
     state.poblaciones = state.poblaciones.filter(x=>!ciclosIds.includes(x.cicloId));
     await Promise.all([storageSet("piscinas", state.piscinas), storageSet("ciclos", state.ciclos), storageSet("poblaciones", state.poblaciones)]);
     showToast("Piscina eliminada."); render();
+  }
+
+  async function handleSaveEficienciaModal(pobId){
+    const pob = state.poblaciones.find(x=>x.id===pobId);
+    if (!pob) return;
+    const val = document.getElementById("ef-modal-input").value;
+    pob.eficiencia = val===""?state.parametros.eficiencia:Number(val);
+    await storageSet("poblaciones", state.poblaciones);
+    closeModal(); showToast("Eficiencia actualizada."); render();
   }
 
   async function handleSaveCiclo(){
@@ -1323,6 +1341,8 @@
     else if (action==="save-peso"){ handleSavePesoSesion(); }
     else if (action==="grid-resize"){ handleGridResize(Number(t.dataset.delta)); }
     else if (action==="bulk-fill"){ handleBulkFill(); }
+    else if (action==="edit-eficiencia"){ openEficienciaModal(t.dataset.pob); }
+    else if (action==="save-eficiencia-modal"){ handleSaveEficienciaModal(t.dataset.pob); }
     else if (action==="remove-photo"){ handleRemovePhoto(); }
     else if (action==="retry-load"){ location.reload(); }
     else if (action==="fb-connect"){ handleFirebaseConnect(); }

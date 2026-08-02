@@ -539,7 +539,10 @@
     const areaAtarraya = Math.PI * Math.pow(state.parametros.radioAtarraya, 2);
     const areaCorregida = areaAtarraya * state.parametros.eficiencia;
     const animalesM2 = ciclo.area ? ciclo.animales/ciclo.area : 0;
-    const pobs = state.poblaciones.filter(x=>x.cicloId===cicloId).sort((a,b)=> a.fecha<b.fecha?-1:1);
+    const pobs = state.poblaciones
+      .filter(x=>x.cicloId===cicloId)
+      .filter(x=> tirosLlenos(x).length>0 || (x.peso!=null && x.peso!=="")) // ocultar poblaciones sin ningún dato registrado
+      .sort((a,b)=> a.fecha<b.fecha?-1:1);
     const rows = pobs.map(pob=>{
       const llenos = tirosLlenos(pob);
       const capturas = llenos.map(t=>Number(t.captura));
